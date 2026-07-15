@@ -49,13 +49,12 @@ sudo install -d -o root -g root -m 0700 /var/lib/tilt-local-pairing
 sudo env PYTHONPATH=/opt/tilt-local-bridge/src \
   python3 -m tilt_local_bridge.tilt_pairing \
   --output /var/lib/tilt-local-pairing/office_shade.key \
-  --username 'owner@example.com' \
   --scan-timeout 30 \
   --permit-live-pairing
 ```
 
-Replace the email and output filename. Enter the Tilt account password at the
-prompt.
+Replace the output filename. Enter the Tilt account email and password at the
+interactive prompts so neither value appears in the command or shell history.
 
 Success prints the shade's BLE address and key path. Install the key for the
 service:
@@ -67,7 +66,9 @@ sudo install -o root -g tiltbridge -m 0640 \
 sudo rm /var/lib/tilt-local-pairing/office_shade.key
 ```
 
-Record the printed BLE address in `bridge.json`.
+Record the printed BLE address only in the protected local `bridge.json`. Do not
+paste pairing output into chat, logs, screenshots, issues, or other public
+messages.
 
 ### Ambiguous completion
 
