@@ -68,7 +68,8 @@ sudo rm /var/lib/tilt-local-pairing/office_shade.key
 
 Record the printed BLE address only in the protected local `bridge.json`. Do not
 paste pairing output into chat, logs, screenshots, issues, or other public
-messages.
+messages. The email prompt is visible on screen, so redact it from any terminal
+output you share.
 
 ### Ambiguous completion
 

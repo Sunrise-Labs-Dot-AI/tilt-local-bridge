@@ -11,7 +11,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-from tilt_local_bridge.tilt_bridge import _async_main, _run_runtime_check, build_parser, main
+from tilt_local_bridge.tilt_bridge import (
+    _async_main,
+    _run_probe,
+    _run_runtime_check,
+    build_parser,
+    main,
+)
 from tilt_local_bridge.tilt_bridge_config import ShadeAccessDisabled
 from tilt_local_bridge.tilt_protocol import TiltProtocolError
 
@@ -76,6 +82,38 @@ class TiltBridgeParserTests(unittest.TestCase):
 
 
 class TiltBridgeRuntimeCheckTests(unittest.IsolatedAsyncioTestCase):
+    async def test_probe_uses_read_gate_without_requesting_position_writes(self) -> None:
+        shade = Mock(id="office_shade", pairing_key_file=Path("shade.key"))
+        config = Mock(shades=[shade])
+        args = build_parser().parse_args(
+            ["probe-status", "--shade", "office_shade", "--allow-shade-reads"]
+        )
+        client = Mock()
+        client.read_status = AsyncMock(
+            return_value=Mock(
+                position_percent=100,
+                battery_percent=80,
+                charge_status="discharging",
+                calibrated=True,
+            )
+        )
+
+        with (
+            patch("tilt_local_bridge.tilt_bridge.authorize_shade_access") as authorize,
+            patch("tilt_local_bridge.tilt_bridge.load_pairing_key", return_value=b"key"),
+            patch("tilt_local_bridge.tilt_bridge.TiltShadeClient", return_value=client),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            result = await _run_probe(config, args)
+
+        self.assertEqual(result, 0)
+        authorize.assert_called_once_with(
+            config,
+            request_reads=True,
+            request_position_writes=False,
+        )
+        client.read_status.assert_awaited_once_with()
+
     async def test_runtime_check_validates_secrets_without_live_access(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

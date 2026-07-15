@@ -22,6 +22,7 @@ class AgentSetupDocsTests(unittest.TestCase):
         normalized = " ".join(readme.split())
         required = (
             "Never bypass SSH host key verification.",
+            "The CLI's explicit read, write, and pairing flags are the enforced safety gates;",
             "Treat pairing and movement as separate approval gates.",
             "Do not ask me to paste them into chat.",
             "probe-status for the first live check",
@@ -34,6 +35,7 @@ class AgentSetupDocsTests(unittest.TestCase):
         pairing = (ROOT / "docs" / "PAIRING.md").read_text(encoding="utf-8")
         self.assertNotIn("--username", pairing)
         self.assertIn("interactive prompts", pairing)
+        self.assertIn("email prompt is visible on screen", pairing)
 
 
 if __name__ == "__main__":

@@ -29,10 +29,12 @@ environment before changing it, confirm which machine is the Raspberry Pi, and
 use SSH only after I confirm any new or changed host key. Never bypass SSH host
 key verification.
 
-Work in stages. Begin with inspection only. Ask once before privileged package
-installation, service changes, or edits under /etc. Start the bridge read-only.
-Run the offline tests and check-runtime before contacting a shade, then use
-probe-status for the first live check because it does not move the shade.
+Work in stages. Begin with inspection only. Ask before each privileged package
+installation, service change, or edit under /etc. Start the bridge read-only.
+The CLI's explicit read, write, and pairing flags are the enforced safety gates;
+do not bypass them. Run the offline tests and check-runtime before contacting a
+shade, then use probe-status for the first live check because it does not move
+the shade.
 
 Treat pairing and movement as separate approval gates. Do not pair, rekey, or
 replace an existing shade key until I explicitly approve that step. Pair exactly
