@@ -26,10 +26,21 @@ jobs:
 
   secrets:
     runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Gitleaks CLI
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          release="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/$archive" "$release/$archive"
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/checksums.txt" "$release/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep "  $archive$" "$RUNNER_TEMP/checksums.txt" > "$RUNNER_TEMP/checksum"
+          cd "$RUNNER_TEMP"
+          sha256sum --check checksum
+          tar --extract --gzip --file "$archive" gitleaks
+      - name: Scan git history for secrets
+        run: "$RUNNER_TEMP/gitleaks git --redact --no-banner"
