@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "access": {
+    "allow_reads": true,
+    "allow_position_writes": false
+  },
+  "mqtt": {
+    "host": "homeassistant.local",
+    "port": 1883,
+    "username_file": "/etc/tilt-local-bridge/mqtt.username",
+    "password_file": "/etc/tilt-local-bridge/mqtt.password",
+    "topic_prefix": "tilt/local",
+    "discovery_prefix": "homeassistant"
+  },
+  "shades": [
+    {
+      "id": "office_shade",
+      "name": "Office Shade",
+      "mac": "02:00:00:00:00:01",
+      "pairing_key_file": "/etc/tilt-local-bridge/keys/office_shade.key"
+    }
+  ],
+  "poll_interval_seconds": 120,
+  "command_cooldown_seconds": 5
+}

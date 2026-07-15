@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tilt-local-bridge"
+version = "0.1.0"
+description = "Local BLE to Home Assistant MQTT bridge for Tilt roller shades"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Sunrise Labs" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Home Automation",
+]
+dependencies = [
+  "bleak==0.22.3",
+  "cryptography==43.0.0",
+  "paho-mqtt==2.1.0",
+]
+
+[project.urls]
+Homepage = "https://sunrise-labs.vercel.app/software/tilt-local-bridge"
+Repository = "https://github.com/Sunrise-Labs-Dot-AI/tilt-local-bridge"
+Issues = "https://github.com/Sunrise-Labs-Dot-AI/tilt-local-bridge/issues"
+
+[project.scripts]
+tilt-local-bridge = "tilt_local_bridge.tilt_bridge:main"
+tilt-local-pair = "tilt_local_bridge.tilt_pairing:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

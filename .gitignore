@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Device keys and broker credentials must never be committed.
+*.key
+*.pem
+*.p12
+*.pfx
+*.secret
+bridge.json
+mqtt.username
+mqtt.password
+tilt-store*.json
