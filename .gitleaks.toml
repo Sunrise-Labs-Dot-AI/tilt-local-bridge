@@ -1,0 +1,12 @@
+title = "Tilt Local Bridge secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The legacy Tilt native app Auth0 client ID is a public identifier, not a client secret."
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''src/tilt_local_bridge/tilt_pairing\.py''']
+regexes = ['''_AUTH0_CLIENT_ID = "Owjr4yOJ2HauKaQhBpICgmfTf7naJsRd"''']
