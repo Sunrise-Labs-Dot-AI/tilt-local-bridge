@@ -54,6 +54,48 @@ Then confirm:
 - `discovery_prefix` matches Home Assistant, normally `homeassistant`
 - the bridge and Home Assistant use the same broker
 
+## All shade entities go offline at once
+
+When every shade becomes unavailable together, check the MQTT path before BLE.
+In the default setup, the bridge Pi is the MQTT client and Home Assistant runs
+the broker. Test the broker name and port from the Pi, which is the machine that
+must resolve and reach them. Substitute the `mqtt.host` and `mqtt.port` values
+from your `bridge.json` if they differ from the defaults below:
+
+```bash
+getent hosts homeassistant.local
+python3 -c "import socket; socket.create_connection(('homeassistant.local', 1883), 3).close(); print('broker reachable')"
+systemctl is-active tilt-local-bridge.service
+journalctl -u tilt-local-bridge.service -n 100 --no-pager
+```
+
+If a `.local` broker name is intermittent, give the broker a DHCP reservation
+and use its stable LAN IP or a reliable local DNS name in `mqtt.host`. Validate
+the protected configuration offline, then restart only the bridge service:
+
+```bash
+sudo -u tiltbridge env PYTHONPATH=/opt/tilt-local-bridge/src \
+  python3 -m tilt_local_bridge.tilt_bridge \
+  --config /etc/tilt-local-bridge/bridge.json \
+  check-runtime --expect-shade-reads
+sudo systemctl restart tilt-local-bridge.service
+```
+
+This restart performs status reads but sends no movement command. Confirm that
+the MQTT integration is connected and the entities become available without
+moving a shade.
+
+If you deliberately run a custom broker on the bridge Pi, Home Assistant is the
+MQTT client instead. Test name resolution and broker reachability from the Home
+Assistant host or container. Change the broker address through Home Assistant's
+supported MQTT integration controls, then reload the integration. If that
+custom connection uses TLS, confirm the broker certificate includes the chosen
+IP address or DNS name before changing it.
+
+Do not rotate MQTT credentials or certificates, replace pairing keys, or
+re-pair shades as the first response to a name-resolution failure. Redact LAN
+addresses, private hostnames, and logs before sharing diagnostics publicly.
+
 ## The shade appears offline while moving
 
 Current releases treat a confirmed write with delayed readback as movement in
