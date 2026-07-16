@@ -59,7 +59,8 @@ Then confirm:
 When every shade becomes unavailable together, check the MQTT path before BLE.
 In the default setup, the bridge Pi is the MQTT client and Home Assistant runs
 the broker. Test the broker name and port from the Pi, which is the machine that
-must resolve and reach them:
+must resolve and reach them. Substitute the `mqtt.host` and `mqtt.port` values
+from your `bridge.json` if they differ from the defaults below:
 
 ```bash
 getent hosts homeassistant.local

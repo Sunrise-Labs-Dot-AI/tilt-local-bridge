@@ -25,6 +25,7 @@ class TroubleshootingDocsTests(unittest.TestCase):
             "In the default setup, the bridge Pi is the MQTT client",
             self.normalized,
         )
+        self.assertIn("check the MQTT path before BLE", self.normalized)
 
     def test_recovery_does_not_pair_rotate_or_move(self) -> None:
         required = (
