@@ -99,6 +99,11 @@ It has no reset, calibration, rename, firmware, or arbitrary-command interface.
 4. Enable [position control](docs/HOME_ASSISTANT.md).
 5. Optionally expose the cover to [Google Home](docs/GOOGLE_HOME.md).
 
+Replacing the Raspberry Pi requires moving the protected configuration and
+pairing keys before the old bridge is retired. Follow the
+[Pi replacement guide](docs/MIGRATION.md). Do not pair the shades again as a
+shortcut.
+
 Trouble along the way is covered in [troubleshooting](docs/TROUBLESHOOTING.md).
 
 ## Proven environment
