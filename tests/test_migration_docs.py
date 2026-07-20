@@ -37,6 +37,20 @@ class MigrationDocsTests(unittest.TestCase):
             self.guide.index("## Enable the new bridge"),
         )
 
+    def test_position_write_gate_comes_from_installed_service(self) -> None:
+        self.assertIn(
+            "systemctl show --property=ExecStart --value",
+            self.guide,
+        )
+        self.assertIn(
+            "A write-enabled value in `bridge.json` is not sufficient authority",
+            self.normalized,
+        )
+        self.assertIn(
+            "old installed `ExecStart` included that exact flag",
+            self.normalized,
+        )
+
     def test_missing_keys_do_not_fall_through_to_pairing(self) -> None:
         self.assertIn("Do not re-pair as a recovery shortcut", self.guide)
         self.assertIn("a separate, explicit approval step", self.normalized)
@@ -49,12 +63,37 @@ class MigrationDocsTests(unittest.TestCase):
         )
         self.assertIn("If the old Pi also hosted a custom broker, stop here", self.guide)
         self.assertIn("DHCP reservation or a reliable local DNS name", self.guide)
+        self.assertIn("actual bridge account can connect", self.normalized)
+        self.assertIn("subscribe to the required command topics", self.normalized)
+        self.assertIn(
+            "A successful Home Assistant connection does not validate",
+            self.normalized,
+        )
 
     def test_transfer_does_not_weaken_ssh_or_secret_handling(self) -> None:
         self.assertIn("stream the protected directory directly", self.normalized)
-        self.assertIn("contains no symlinks", self.normalized)
+        self.assertIn("re-check the extracted tree for symlinks", self.normalized)
         self.assertNotIn("StrictHostKeyChecking=no", self.guide)
         self.assertNotIn("chmod 777", self.guide)
+        old_symlink_check = self.guide.index(
+            "Reject symlinks in the old protected tree"
+        )
+        transfer = self.guide.index("stream the protected directory directly")
+        new_symlink_check = self.guide.index(
+            "Before any ownership or mode change, re-check"
+        )
+        ownership_change = self.guide.index(
+            "Restore the expected ownership and modes"
+        )
+        self.assertLess(old_symlink_check, transfer)
+        self.assertLess(transfer, new_symlink_check)
+        self.assertLess(new_symlink_check, ownership_change)
+
+    def test_old_protected_state_has_retirement_boundary(self) -> None:
+        self.assertIn("## Retire the old protected state", self.guide)
+        self.assertIn("documented rollback window", self.normalized)
+        self.assertIn("Do not wipe it while rollback remains possible", self.guide)
+        self.assertIn("supported secure-erasure process", self.normalized)
 
 
 if __name__ == "__main__":

@@ -13,9 +13,25 @@ before service mode starts on the new Pi.
 
 1. Confirm the old Pi is the running bridge host. Check the SSH host key through
    a trusted path before connecting. Never bypass a new or changed host key.
-2. Record whether position writes are enabled. The new Pi must preserve that
-   setting, not silently gain or lose movement authority.
-3. Validate the protected files without contacting a shade:
+2. Record the installed service launch gate:
+
+   ```bash
+   systemctl show --property=ExecStart --value tilt-local-bridge.service
+   ```
+
+   Position writes are authorized only when the installed `ExecStart` includes
+   `--allow-position-writes`. A write-enabled value in `bridge.json` is not
+   sufficient authority. The new Pi must preserve the installed launch gate,
+   not silently gain or lose movement authority.
+3. Reject symlinks in the old protected tree before creating the transfer:
+
+   ```bash
+   sudo find /etc/tilt-local-bridge -type l -print -quit
+   ```
+
+   Any output is a refusal. Resolve it through a separately reviewed recovery
+   step before continuing.
+4. Validate the protected files without contacting a shade:
 
    ```bash
    sudo -u tiltbridge env PYTHONPATH=/opt/tilt-local-bridge/src \
@@ -24,8 +40,9 @@ before service mode starts on the new Pi.
      check-runtime --expect-shade-reads
    ```
 
-   Add `--expect-position-writes` only when writes are already enabled.
-4. Fence the old bridge before copying anything:
+   Add `--expect-position-writes` only when the installed `ExecStart` includes
+   `--allow-position-writes`.
+5. Fence the old bridge before copying anything:
 
    ```bash
    sudo systemctl disable --now tilt-local-bridge.service
@@ -66,6 +83,17 @@ ssh old-bridge.local \
       'sudo tar --extract --file=- --directory=/etc --no-same-owner'
 ```
 
+Before any ownership or mode change, re-check the extracted tree for symlinks:
+
+```bash
+ssh new-bridge.local \
+  'sudo find /etc/tilt-local-bridge -type l -print -quit'
+```
+
+Any output is a refusal. Stop and remove the untrusted transfer through a
+separately reviewed recovery step. Do not run `chown`, `chmod`, or the bridge
+against that tree.
+
 Restore the expected ownership and modes on the new Pi:
 
 ```bash
@@ -83,13 +111,6 @@ ssh new-bridge.local \
    sudo chown -R root:tiltbridge /etc/tilt-local-bridge/keys && \
    sudo find /etc/tilt-local-bridge/keys -type d -exec chmod 0750 {} + && \
    sudo find /etc/tilt-local-bridge/keys -type f -exec chmod 0640 {} +'
-```
-
-Confirm that the protected tree contains no symlinks. Any output is a refusal:
-
-```bash
-ssh new-bridge.local \
-  'sudo find /etc/tilt-local-bridge -type l -print -quit'
 ```
 
 Do not post the archive, configuration, key filenames, or command output to an
@@ -135,6 +156,13 @@ through that broker's supported process. Validate the broker from Home
 Assistant before enabling the new bridge. Do not rotate credentials or
 certificates merely because the host changed.
 
+Validate the bridge account separately while both bridge services remain
+stopped. Using the broker's supported diagnostics or audit log, confirm that
+the actual bridge account can connect with its configured TLS identity, publish
+only to the required discovery and state topics, and subscribe to the required
+command topics. Do not publish a command message during this check. A successful
+Home Assistant connection does not validate the bridge account or its ACLs.
+
 Give any broker host a DHCP reservation or a reliable local DNS name before
 putting it in `mqtt.host`. A current DHCP lease is not a stable target. When a
 custom TLS broker moves, its certificate must cover the chosen stable address.
@@ -148,9 +176,10 @@ offline checks, every shade probe, and the broker gate pass:
 sudo ./scripts/install.sh --activate --enable
 ```
 
-If position writes were already enabled on the old bridge, preserve that gate
-with `--allow-position-writes`. Do not add the flag during a read-only
-migration.
+Pass `--allow-position-writes` only when the old installed `ExecStart` included
+that exact flag and the new offline check passed with
+`--expect-position-writes`. A write-enabled configuration value alone is not
+authority. Do not add the flag during a read-only migration.
 
 Confirm the service is active, Home Assistant's MQTT integration is connected,
 and every migrated entity becomes available without moving a shade. Keep the
@@ -168,6 +197,15 @@ If a custom broker moved, restore Home Assistant's prior supported MQTT
 configuration and confirm the old broker is reachable. Re-enable the old
 bridge only after the new bridge is inactive and the two hosts cannot run the
 service at the same time.
+
+## Retire the old protected state
+
+Keep the old Pi powered off and its storage under physical control for a
+documented rollback window. Do not wipe it while rollback remains possible.
+After the replacement is accepted and the rollback window closes, remove the
+old protected state with the storage platform's supported secure-erasure
+process, or retain or destroy the storage. Do not reuse, sell, or discard media
+while it still contains shade keys or MQTT credentials.
 
 ## If the old protected state is unavailable
 
