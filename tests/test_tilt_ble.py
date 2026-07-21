@@ -117,6 +117,7 @@ class FakeTiltPeripheral:
         defer_set_position: bool = False,
         drop_status_response_after: int | None = None,
         fail_disconnect: bool = False,
+        fail_disconnect_after_close: bool = False,
         invalid_status_response: bool = False,
         connect_error: Exception | None = None,
         set_position_error: Exception | None = None,
@@ -130,6 +131,7 @@ class FakeTiltPeripheral:
         self.defer_set_position = defer_set_position
         self.drop_status_response_after = drop_status_response_after
         self.fail_disconnect = fail_disconnect
+        self.fail_disconnect_after_close = fail_disconnect_after_close
         self.invalid_status_response = invalid_status_response
         self.connect_error = connect_error
         self.set_position_error = set_position_error
@@ -160,9 +162,11 @@ class FakeTiltPeripheral:
 
     async def disconnect(self) -> None:
         self.disconnects += 1
-        self.is_connected = False
         if self.fail_disconnect:
             raise RuntimeError("injected disconnect failure")
+        self.is_connected = False
+        if self.fail_disconnect_after_close:
+            raise EOFError("injected already-disconnected failure")
 
     async def start_notify(self, uuid: str, callback: Any) -> None:
         if uuid != TILT_RESPONSE_UUID:
@@ -446,6 +450,30 @@ class TiltBleReadTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(factory_calls, 1)
         self.assertEqual(first.disconnects, 1)
+        self.assertTrue(first.is_connected)
+
+    async def test_disconnect_error_is_accepted_after_client_is_disconnected(self) -> None:
+        config = _config(writes=False)
+        permit = authorize_shade_access(
+            config, request_reads=True, request_position_writes=False
+        )
+        peripheral = FakeTiltPeripheral(
+            config.shades[0].mac,
+            timeout=1,
+            fail_disconnect_after_close=True,
+        )
+        client = TiltShadeClient(
+            config.shades[0],
+            KEY,
+            permit,
+            client_factory=lambda *_args, **_kwargs: peripheral,
+        )
+
+        status = await client.read_status()
+
+        self.assertEqual(status.position_percent, 25)
+        self.assertEqual(peripheral.disconnects, 1)
+        self.assertFalse(peripheral.is_connected)
 
     async def test_cancellation_cleans_active_session_without_retry(self) -> None:
         config = _config(writes=False)
