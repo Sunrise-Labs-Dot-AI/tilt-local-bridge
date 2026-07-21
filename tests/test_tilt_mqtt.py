@@ -6,14 +6,19 @@ import asyncio
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
-from tilt_local_bridge.tilt_ble import AmbiguousPositionWrite, PositionVerificationPending
+from tilt_local_bridge.tilt_ble import (
+    AmbiguousPositionWrite,
+    PositionVerificationPending,
+    TiltShadeClient,
+)
 from tilt_local_bridge.tilt_bridge_config import (
     BridgeAccessConfig,
     MqttConfig,
     ShadeConfig,
     TiltBridgeConfig,
+    authorize_shade_access,
 )
 from tilt_local_bridge.tilt_mqtt import (
     IncomingMqttMessage,
@@ -23,7 +28,10 @@ from tilt_local_bridge.tilt_mqtt import (
     parse_position_command,
     topics_for,
 )
-from tilt_local_bridge.tilt_protocol import ShadeStatus
+from tilt_local_bridge.tilt_protocol import ShadeStatus, TiltProtocolError
+
+
+KEY = bytes(range(32))
 
 
 def _config() -> TiltBridgeConfig:
@@ -225,6 +233,50 @@ class BridgeBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             (topics.position, "35", True, 1),
             self.publisher.published,
+        )
+
+    async def test_recovered_status_retry_never_publishes_offline(self) -> None:
+        shade = self.config.shades[0]
+        topics = topics_for(self.config, shade)
+        permit = authorize_shade_access(
+            self.config, request_reads=True, request_position_writes=False
+        )
+        client = TiltShadeClient(shade, KEY, permit)
+        recovered = ShadeStatus(440, 91, 0, True)
+        client._run_session = AsyncMock(  # type: ignore[method-assign]
+            side_effect=[TiltProtocolError("transient"), recovered]
+        )
+        self.bridge._shade_clients[shade.id] = client
+        self.publisher.published.clear()
+
+        with patch("tilt_local_bridge.tilt_ble.asyncio.sleep", new_callable=AsyncMock):
+            await self.bridge.refresh_all()
+
+        self.assertEqual(client._run_session.await_count, 2)
+        self.assertNotIn(
+            (topics.availability, "offline", True, 1), self.publisher.published
+        )
+        self.assertIn((topics.availability, "online", True, 1), self.publisher.published)
+
+    async def test_exhausted_status_retry_publishes_offline(self) -> None:
+        shade = self.config.shades[0]
+        topics = topics_for(self.config, shade)
+        permit = authorize_shade_access(
+            self.config, request_reads=True, request_position_writes=False
+        )
+        client = TiltShadeClient(shade, KEY, permit)
+        client._run_session = AsyncMock(  # type: ignore[method-assign]
+            side_effect=[TiltProtocolError("first"), TiltProtocolError("second")]
+        )
+        self.bridge._shade_clients[shade.id] = client
+        self.publisher.published.clear()
+
+        with patch("tilt_local_bridge.tilt_ble.asyncio.sleep", new_callable=AsyncMock):
+            await self.bridge.refresh_all()
+
+        self.assertEqual(client._run_session.await_count, 2)
+        self.assertIn(
+            (topics.availability, "offline", True, 1), self.publisher.published
         )
 
     async def test_reconnect_restores_clean_session_before_fresh_read(self) -> None:
