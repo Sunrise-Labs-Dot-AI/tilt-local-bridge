@@ -235,7 +235,9 @@ async def _close_ble_client(client: Any, session: "_TiltBleSession | None") -> N
         try:
             await client.disconnect()
         except Exception as exc:
-            raise TiltBleCleanupError("Tilt BLE client disconnect failed.") from exc
+            # BlueZ can report a disconnect error after the link is already closed.
+            if client.is_connected:
+                raise TiltBleCleanupError("Tilt BLE client disconnect failed.") from exc
     if client.is_connected:
         raise TiltBleCleanupError("Tilt BLE client remained connected after disconnect.")
 
