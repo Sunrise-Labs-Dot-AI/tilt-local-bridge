@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import weakref
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
+
+from bleak.exc import BleakError
 
 from .tilt_bridge_config import ShadeAccessPermit, ShadeConfig
 from .tilt_protocol import (
@@ -41,9 +44,11 @@ from .tilt_protocol import (
 _ResultT = TypeVar("_ResultT")
 _PROTOCOL_THROTTLE_SECONDS = 0.1
 _SECURE_CONNECTOR_THROTTLE_SECONDS = 0.1
+_STATUS_READ_RETRY_DELAY_SECONDS = 0.5
 _BLE_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
     weakref.WeakKeyDictionary()
 )
+_LOGGER = logging.getLogger(__name__)
 
 
 class TiltBleError(RuntimeError):
@@ -110,7 +115,23 @@ class TiltShadeClient:
 
     async def read_status(self) -> ShadeStatus:
         self._permit.assert_valid()
-        return await self._run_session(lambda session: session.read_status())
+        try:
+            return await self._run_session(lambda session: session.read_status())
+        except AuthenticationError:
+            raise
+        except (BleakError, TiltBleError, TiltProtocolError, TimeoutError) as exc:
+            _LOGGER.warning(
+                "Tilt shade %s status read retrying once after transient %s",
+                self.shade.id,
+                type(exc).__name__,
+            )
+            await asyncio.sleep(_STATUS_READ_RETRY_DELAY_SECONDS)
+            status = await self._run_session(lambda session: session.read_status())
+            _LOGGER.info(
+                "Tilt shade %s status read recovered on retry",
+                self.shade.id,
+            )
+            return status
 
     async def set_position_and_read_status(
         self,

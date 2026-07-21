@@ -37,6 +37,13 @@ Check:
 
 Run with `--verbose` for error classes, but never post unredacted logs.
 
+Each scheduled status read gets one retry for a transient BLE transport or
+protocol failure. The retry opens a fresh BLE session and never sends a movement
+command. Home Assistant is marked offline only when both read attempts fail.
+Frequent retry messages still indicate a real reliability problem. Check shade
+range, local radio interference, and whether another phone or bridge is holding
+a BLE connection.
+
 ## Home Assistant discovers nothing
 
 Check service and broker connectivity:
