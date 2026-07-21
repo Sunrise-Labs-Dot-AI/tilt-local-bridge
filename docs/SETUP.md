@@ -133,3 +133,6 @@ sudo ./scripts/install.sh --activate --enable --allow-position-writes
 ```
 
 Omit `--allow-position-writes` if your service is intentionally read-only.
+
+To replace the Raspberry Pi, do not repeat first-time pairing. Follow
+[Pi replacement and protected-state migration](MIGRATION.md).
