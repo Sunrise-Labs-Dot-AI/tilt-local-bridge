@@ -140,6 +140,7 @@ class FakeTiltPeripheral:
         self.application_commands: list[ShadeCommand] = []
         self.writes: list[bytes] = []
         self.status_requests = 0
+        self.status_request_started: asyncio.Event | None = None
         self.connects = 0
         self.disconnects = 0
         self.notification_stops = 0
@@ -214,6 +215,8 @@ class FakeTiltPeripheral:
         self.application_commands.append(command)
         if command is ShadeCommand.GET_STATUS:
             self.status_requests += 1
+            if self.status_request_started is not None:
+                self.status_request_started.set()
             if (
                 self.drop_status_response_after is not None
                 and self.status_requests > self.drop_status_response_after
@@ -454,6 +457,7 @@ class TiltBleReadTests(unittest.IsolatedAsyncioTestCase):
             timeout=1,
             drop_status_response_after=0,
         )
+        peripheral.status_request_started = asyncio.Event()
         factory_calls = 0
 
         def factory(*_args, **_kwargs) -> FakeTiltPeripheral:
@@ -470,8 +474,7 @@ class TiltBleReadTests(unittest.IsolatedAsyncioTestCase):
         )
 
         read_task = asyncio.create_task(client.read_status())
-        while peripheral.status_requests == 0:
-            await asyncio.sleep(0)
+        await asyncio.wait_for(peripheral.status_request_started.wait(), timeout=5)
         read_task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await read_task
