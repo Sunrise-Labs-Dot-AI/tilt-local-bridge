@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from tilt_local_bridge.tilt_ble import (
     AmbiguousPositionWrite,
     PositionVerificationPending,
+    TiltBleCleanupError,
     TiltBleError,
     TiltShadeClient,
 )
@@ -117,6 +119,7 @@ class FakeTiltPeripheral:
         fail_disconnect: bool = False,
         invalid_status_response: bool = False,
         connect_error: Exception | None = None,
+        set_position_error: Exception | None = None,
     ) -> None:
         self.address = address
         self.timeout = timeout
@@ -129,6 +132,7 @@ class FakeTiltPeripheral:
         self.fail_disconnect = fail_disconnect
         self.invalid_status_response = invalid_status_response
         self.connect_error = connect_error
+        self.set_position_error = set_position_error
         self.is_connected = False
         self.notification_callback: Any = None
         self.client_assembler = BleMessageAssembler()
@@ -225,6 +229,8 @@ class FakeTiltPeripheral:
                 command, status, counter=counter, message_id=message_id
             )
         if command is ShadeCommand.SET_POSITION:
+            if self.set_position_error is not None:
+                raise self.set_position_error
             requested = int.from_bytes(payload[:2], "little") // 10
             if (
                 not self.defer_set_position
@@ -346,6 +352,7 @@ class TiltBleReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status.position_percent, 25)
         self.assertEqual(created, [first, second])
         self.assertEqual(first.connects, 1)
+        self.assertEqual(first.disconnects, 1)
         self.assertEqual(second.connects, 1)
 
     async def test_programming_error_fails_without_retry(self) -> None:
@@ -406,24 +413,73 @@ class TiltBleReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(secret, output)
         self.assertNotIn(config.shades[0].mac, output)
 
-    async def test_disconnect_failure_does_not_mask_completed_status(self) -> None:
+    async def test_disconnect_failure_blocks_retry_and_marks_cleanup_uncertain(self) -> None:
+        config = _config(writes=False)
+        permit = authorize_shade_access(
+            config, request_reads=True, request_position_writes=False
+        )
+        first = FakeTiltPeripheral(
+            config.shades[0].mac,
+            timeout=1,
+            fail_disconnect=True,
+            invalid_status_response=True,
+        )
+        factory_calls = 0
+
+        def factory(*_args, **_kwargs) -> FakeTiltPeripheral:
+            nonlocal factory_calls
+            factory_calls += 1
+            return first
+
+        client = TiltShadeClient(
+            config.shades[0],
+            KEY,
+            permit,
+            client_factory=factory,
+        )
+
+        with self.assertRaises(TiltBleCleanupError):
+            await client.read_status()
+
+        self.assertEqual(factory_calls, 1)
+        self.assertEqual(first.disconnects, 1)
+
+    async def test_cancellation_cleans_active_session_without_retry(self) -> None:
         config = _config(writes=False)
         permit = authorize_shade_access(
             config, request_reads=True, request_position_writes=False
         )
         peripheral = FakeTiltPeripheral(
-            config.shades[0].mac, timeout=1, fail_disconnect=True
+            config.shades[0].mac,
+            timeout=1,
+            drop_status_response_after=0,
         )
+        factory_calls = 0
+
+        def factory(*_args, **_kwargs) -> FakeTiltPeripheral:
+            nonlocal factory_calls
+            factory_calls += 1
+            return peripheral
+
         client = TiltShadeClient(
             config.shades[0],
             KEY,
             permit,
-            client_factory=lambda *_args, **_kwargs: peripheral,
+            client_factory=factory,
+            response_timeout_seconds=30,
         )
 
-        status = await client.read_status()
+        read_task = asyncio.create_task(client.read_status())
+        while peripheral.status_requests == 0:
+            await asyncio.sleep(0)
+        read_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await read_task
 
-        self.assertEqual(status.position_percent, 25)
+        self.assertEqual(factory_calls, 1)
+        self.assertEqual(peripheral.notification_stops, 1)
+        self.assertEqual(peripheral.disconnects, 1)
+        self.assertFalse(peripheral.is_connected)
 
 
 class TiltBleWriteTests(unittest.IsolatedAsyncioTestCase):
@@ -559,6 +615,37 @@ class TiltBleWriteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIsInstance(raised.exception, PositionVerificationPending)
         self.assertEqual(peripheral.application_commands.count(ShadeCommand.SET_POSITION), 1)
+
+    async def test_bleak_error_after_position_transmission_never_retries_write(self) -> None:
+        config = _config(writes=True)
+        permit = authorize_shade_access(
+            config, request_reads=True, request_position_writes=True
+        )
+        peripheral = FakeTiltPeripheral(
+            config.shades[0].mac,
+            timeout=1,
+            set_position_error=BleakError("transport failed after write"),
+        )
+        factory_calls = 0
+
+        def factory(*_args, **_kwargs) -> FakeTiltPeripheral:
+            nonlocal factory_calls
+            factory_calls += 1
+            return peripheral
+
+        client = TiltShadeClient(
+            config.shades[0],
+            KEY,
+            permit,
+            client_factory=factory,
+        )
+
+        with self.assertRaises(BleakError):
+            await client.set_position_and_read_status(70, settle_seconds=0)
+
+        self.assertEqual(factory_calls, 1)
+        self.assertEqual(peripheral.application_commands.count(ShadeCommand.SET_POSITION), 1)
+        self.assertEqual(peripheral.disconnects, 1)
 
 
 if __name__ == "__main__":

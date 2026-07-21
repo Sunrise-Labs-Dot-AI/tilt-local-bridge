@@ -59,6 +59,10 @@ class TiltBleTimeout(TiltBleError):
     """Raised when a required BLE ACK or response does not arrive."""
 
 
+class TiltBleCleanupError(RuntimeError):
+    """Raised when a BLE client cannot be proven disconnected."""
+
+
 class AmbiguousPositionWrite(TiltBleError):
     """Raised when a position write cannot be confirmed by readback."""
 
@@ -188,8 +192,9 @@ class TiltShadeClient:
                 timeout=self._connect_timeout_seconds,
                 pair=False,
             )
-            await client.connect()
+            session: _TiltBleSession | None = None
             try:
+                await client.connect()
                 if not client.is_connected:
                     raise TiltBleError(f"Unable to connect to configured shade {self.shade.id}.")
                 session = _TiltBleSession(
@@ -199,16 +204,40 @@ class TiltShadeClient:
                     response_timeout_seconds=self._response_timeout_seconds,
                 )
                 await session.start()
-                try:
-                    await session.authenticate()
-                    return await operation(session)
-                finally:
-                    await session.stop()
+                await session.authenticate()
+                return await operation(session)
             finally:
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
+                await _await_cancellation_safe_cleanup(
+                    _close_ble_client(client, session)
+                )
+
+
+async def _await_cancellation_safe_cleanup(cleanup: Awaitable[None]) -> None:
+    cleanup_task = asyncio.create_task(cleanup, name="tilt-ble-cleanup")
+    try:
+        await asyncio.shield(cleanup_task)
+    except asyncio.CancelledError:
+        try:
+            await cleanup_task
+        except Exception as exc:
+            _LOGGER.warning(
+                "Tilt BLE cleanup failed during cancellation: %s",
+                type(exc).__name__,
+            )
+        raise
+
+
+async def _close_ble_client(client: Any, session: "_TiltBleSession | None") -> None:
+    try:
+        if session is not None:
+            await session.stop()
+    finally:
+        try:
+            await client.disconnect()
+        except Exception as exc:
+            raise TiltBleCleanupError("Tilt BLE client disconnect failed.") from exc
+    if client.is_connected:
+        raise TiltBleCleanupError("Tilt BLE client remained connected after disconnect.")
 
 
 class _TiltBleSession:
