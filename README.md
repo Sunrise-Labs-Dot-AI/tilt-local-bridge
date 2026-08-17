@@ -2,8 +2,8 @@
 
 Tilt Local Bridge exposes compatible Tilt and SmarterHome roller shades to
 Home Assistant through MQTT discovery. A Raspberry Pi talks to each shade over
-Bluetooth Low Energy. Home Assistant gets a cover with open, close, stop,
-position, availability, and battery state.
+Bluetooth Low Energy. Home Assistant gets a cover with open, close, position,
+availability, and battery state.
 
 Runtime control stays on your local network. The legacy Tilt account service is
 used only when the optional pairing tool requests and installs a device key.
