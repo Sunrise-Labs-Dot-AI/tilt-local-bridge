@@ -66,9 +66,24 @@ Then confirm:
 
 ## All shade entities go offline at once
 
-When every shade becomes unavailable together, check the MQTT path before BLE.
-In the default setup, the bridge Pi is the MQTT client and Home Assistant runs
-the broker. Test the broker name and port from the Pi, which is the machine that
+When every shade becomes unavailable together, confirm the bridge Pi is on the
+network before you test anything else. A Pi that boots but never associates to
+Wi-Fi produces exactly this symptom, and every MQTT check below will then fail
+in a way that points at the broker rather than at the link:
+
+```bash
+nmcli device status
+ip -4 addr show wlan0
+```
+
+If `wlan0` has no address, fix the link first. A profile pinned to one access
+point with `bssid=` cannot roam, so a single degraded radio takes the bridge
+offline while every other client on the same SSID stays up. Clear the pin with
+`nmcli connection modify <name> 802-11-wireless.bssid ""` rather than pinning
+to a different access point.
+
+Once the Pi has an address, check the MQTT path before BLE. In the default
+setup, the bridge Pi is the MQTT client and Home Assistant runs the broker. Test the broker name and port from the Pi, which is the machine that
 must resolve and reach them. Substitute the `mqtt.host` and `mqtt.port` values
 from your `bridge.json` if they differ from the defaults below:
 
