@@ -1,0 +1,139 @@
+blueprint:
+  name: Tilt Local Bridge low-battery alert
+  description: >-
+    Creates a persistent Home Assistant notification after a Tilt shade battery
+    remains low, reminds twice daily while it is still low, and dismisses the
+    notification after the battery recovers. Create one automation from this
+    blueprint for each shade battery sensor.
+  domain: automation
+  source_url: https://github.com/Sunrise-Labs-Dot-AI/tilt-local-bridge/blob/main/blueprints/automation/tilt_local_bridge/low_battery_alert.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    battery_sensor:
+      name: Shade battery sensor
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: battery
+    low_threshold:
+      name: Low-battery threshold
+      description: Alert when the reported battery remains below this percentage.
+      default: 40
+      selector:
+        number:
+          min: 1
+          max: 49
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    recovery_threshold:
+      name: Recovery threshold
+      description: >-
+        Dismiss the alert after the battery rises above this percentage. Keep
+        this higher than the low-battery threshold to prevent alert flapping.
+      default: 50
+      selector:
+        number:
+          min: 50
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    debounce_minutes:
+      name: Low-battery debounce
+      description: Minutes the battery must remain low before the first alert.
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 1440
+          step: 1
+          unit_of_measurement: minutes
+          mode: box
+    notification_actions:
+      name: Additional notification actions
+      description: >-
+        Optional actions such as a mobile push notification. Home Assistant's
+        persistent notification is always created.
+      default: []
+      selector:
+        action: {}
+
+variables:
+  battery_sensor: !input battery_sensor
+  low_threshold: !input low_threshold
+  recovery_threshold: !input recovery_threshold
+  trigger_id: "{{ trigger.id if trigger is defined else 'manual' }}"
+  notification_id: >-
+    {{ 'tilt_local_bridge_low_battery_' ~ battery_sensor.split('.')[-1] }}
+
+triggers:
+  - trigger: numeric_state
+    entity_id: !input battery_sensor
+    below: !input low_threshold
+    for:
+      minutes: !input debounce_minutes
+    id: low
+  - trigger: numeric_state
+    entity_id: !input battery_sensor
+    above: !input recovery_threshold
+    for:
+      minutes: !input debounce_minutes
+    id: recovered
+  - trigger: time_pattern
+    hours: "/12"
+    minutes: "0"
+    id: reminder
+  - trigger: homeassistant
+    event: start
+    id: startup
+
+conditions: []
+
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >-
+              {% set level = states(battery_sensor) %}
+              {{ trigger_id == 'reminder'
+                 and level not in ['unknown', 'unavailable']
+                 and (level | float(101)) < (low_threshold | float) }}
+        sequence:
+          - delay:
+              minutes: !input debounce_minutes
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >-
+              {% set level = states(battery_sensor) %}
+              {{ trigger_id in ['low', 'reminder', 'startup', 'manual']
+                 and level not in ['unknown', 'unavailable']
+                 and (level | float(101)) < (low_threshold | float) }}
+        sequence:
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: Tilt shade battery is low
+              message: >-
+                {% set name = state_attr(battery_sensor, 'friendly_name') or battery_sensor %}
+                {{ name }} is at {{ states(battery_sensor) }}%. Charge the shade
+                and check that its solar panel is receiving enough light.
+          - choose: []
+            default: !input notification_actions
+      - conditions:
+          - condition: template
+            value_template: >-
+              {% set level = states(battery_sensor) %}
+              {{ trigger_id in ['recovered', 'reminder', 'startup', 'manual']
+                 and level not in ['unknown', 'unavailable']
+                 and (level | float(-1)) > (recovery_threshold | float) }}
+        sequence:
+          - action: persistent_notification.dismiss
+            data:
+              notification_id: "{{ notification_id }}"
+
+mode: restart
+max_exceeded: silent
