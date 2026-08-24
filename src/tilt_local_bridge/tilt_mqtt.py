@@ -8,7 +8,8 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from datetime import datetime, timezone
+from typing import Callable, Protocol
 
 from .tilt_ble import PositionVerificationPending, TiltShadeClient
 from .tilt_bridge_config import ShadeConfig, TiltBridgeConfig
@@ -166,6 +167,9 @@ class TiltMqttBridge:
         config: TiltBridgeConfig,
         publisher: MqttPublisher,
         shade_clients: dict[str, TiltShadeClient],
+        *,
+        wall_clock: Callable[[], datetime] | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self._config = config
         self._publisher = publisher
@@ -185,6 +189,9 @@ class TiltMqttBridge:
         self._command_events = {shade.id: asyncio.Event() for shade in config.shades}
         self._workers: list[asyncio.Task[None]] = []
         self._refresh_lock = asyncio.Lock()
+        self._wall_clock = wall_clock or _utc_now
+        self._monotonic_clock = monotonic_clock or time.monotonic
+        self._last_refresh_monotonic: float | None = None
         self._stopping = False
 
     async def start(self) -> None:
@@ -235,6 +242,7 @@ class TiltMqttBridge:
             self._publish_bridge_availability(
                 "online" if succeeded or self._available_shades else "offline"
             )
+            self._last_refresh_monotonic = self._monotonic_clock()
 
     async def handle_reconnect(self) -> None:
         """Restore the clean MQTT session before publishing fresh availability."""
@@ -403,8 +411,24 @@ class TiltMqttBridge:
 
     async def _poll_loop(self) -> None:
         while not self._stopping:
-            await asyncio.sleep(self._config.poll_interval_seconds)
+            delay = self._poll_delay_seconds()
+            if delay > 0:
+                await asyncio.sleep(delay)
+                continue
             await self.refresh_all()
+
+    def _poll_delay_seconds(self) -> float:
+        if self._last_refresh_monotonic is None:
+            return 0.0
+        moment = self._wall_clock()
+        elapsed = max(0.0, self._monotonic_clock() - self._last_refresh_monotonic)
+        delay = max(0.0, self._config.poll_interval_at(moment) - elapsed)
+        if self._config.quiet_hours is not None:
+            delay = min(
+                delay,
+                self._config.quiet_hours.seconds_until_transition(moment),
+            )
+        return delay
 
     def _subscribe_topics(self) -> None:
         for topics in self._topics.values():
@@ -437,3 +461,7 @@ class TiltMqttBridge:
 
 def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)

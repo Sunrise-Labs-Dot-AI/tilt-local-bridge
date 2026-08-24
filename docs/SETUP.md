@@ -91,6 +91,22 @@ Start with writes disabled:
 }
 ```
 
+The example configuration polls each idle shade every 30 minutes and stretches
+that interval to two hours from 23:00 through 06:00. Quiet hours use the named
+IANA timezone in the config, not the Raspberry Pi's local timezone. Change
+`quiet_hours.timezone` to your own region, such as `America/New_York` or
+`Europe/London`. You can also change the start, end, and both poll intervals.
+
+Routine polling only refreshes status. Home Assistant commands and the bounded
+checks performed while a shade is moving remain immediate. Omitting
+`quiet_hours` disables the overnight schedule. The regular poll interval may be
+30 to 3600 seconds; the quiet-hours interval may be 30 to 86400 seconds and
+must not be shorter than the regular interval.
+
+In regions that change clocks for daylight saving time, keep quiet-hour
+boundaries outside the repeated or skipped early-morning hour. The example's
+23:00 and 06:00 boundaries are unambiguous.
+
 Validate the protected files without contacting a shade:
 
 ```bash

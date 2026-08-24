@@ -68,8 +68,10 @@ give you the smallest next action. The manual path remains below.
 - Calibrated positions from 0 to 100 percent
 - Open, close, and exact-position commands in Home Assistant
 - Battery and availability sensors
+- Battery-conscious idle polling with configurable timezone-aware quiet hours
 - Multiple shades from one Raspberry Pi
 - MQTT discovery, so no custom Home Assistant component is required
+- Optional Home Assistant low-battery alert blueprint
 - Optional one-shot pairing with credentials entered interactively and never
   written to disk
 - Conservative position verification while a shade is moving
