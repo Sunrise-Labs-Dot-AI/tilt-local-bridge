@@ -416,7 +416,7 @@ class BridgeBehaviorTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.01)
         self.assertEqual(self.client.targets, [60])
 
-    async def test_new_target_is_rejected_while_command_is_in_flight(self) -> None:
+    async def test_new_target_is_queued_while_command_is_in_flight(self) -> None:
         topics = topics_for(self.config, self.config.shades[0])
         self.client.position_started = asyncio.Event()
         self.client.position_release = asyncio.Event()
@@ -432,10 +432,63 @@ class BridgeBehaviorTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.01)
 
         self.assertEqual(self.client.targets, [70])
-        self.assertEqual(self.bridge._pending_targets, {})
+        self.assertEqual(
+            self.bridge._pending_targets, {self.config.shades[0].id: 80}
+        )
 
-    async def test_moving_shade_stays_online_and_rejects_another_command(self) -> None:
+    async def test_latest_target_wins_while_worker_waits_for_refresh(self) -> None:
         topics = topics_for(self.config, self.config.shades[0])
+        self.client.read_started = asyncio.Event()
+        self.client.read_release = asyncio.Event()
+        refresh = asyncio.create_task(self.bridge.refresh_all())
+        await self.client.read_started.wait()
+
+        await self.bridge.handle_message(
+            IncomingMqttMessage(topics.set_position, b"20")
+        )
+        await asyncio.sleep(0.01)
+        await self.bridge.handle_message(
+            IncomingMqttMessage(topics.set_position, b"80")
+        )
+        self.client.read_release.set()
+        await refresh
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(self.client.targets, [80])
+
+    async def test_refresh_wait_does_not_consume_command_cooldown(self) -> None:
+        topics = topics_for(self.config, self.config.shades[0])
+        self.bridge._config = replace(
+            self.config,
+            command_cooldown_seconds=0.05,
+        )
+        self.client.read_started = asyncio.Event()
+        self.client.read_release = asyncio.Event()
+        self.client.position_started = asyncio.Event()
+        self.client.position_release = asyncio.Event()
+        refresh = asyncio.create_task(self.bridge.refresh_all())
+        await self.client.read_started.wait()
+
+        await self.bridge.handle_message(
+            IncomingMqttMessage(topics.set_position, b"20")
+        )
+        await asyncio.sleep(0.06)
+        self.client.read_release.set()
+        await refresh
+        await self.client.position_started.wait()
+        await self.bridge.handle_message(
+            IncomingMqttMessage(topics.set_position, b"80")
+        )
+        self.client.position_release.set()
+
+        await asyncio.sleep(0.01)
+        self.assertEqual(self.client.targets, [20])
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.client.targets, [20, 80])
+
+    async def test_moving_shade_stays_online_and_supersedes_verification(self) -> None:
+        topics = topics_for(self.config, self.config.shades[0])
+        shade_id = self.config.shades[0].id
         moving_status = ShadeStatus(420, 87, 0, True)
         self.client.position_error = PositionVerificationPending(
             "still moving", moving_status
@@ -447,16 +500,92 @@ class BridgeBehaviorTests(unittest.IsolatedAsyncioTestCase):
                 IncomingMqttMessage(topics.set_position, b"70")
             )
             await asyncio.sleep(0.01)
+            self.assertEqual(self.bridge._verification_targets, {shade_id: 70})
             await self.bridge.handle_message(
                 IncomingMqttMessage(topics.set_position, b"80")
             )
             await asyncio.sleep(0.01)
 
         self.assertEqual(self.client.targets, [70])
+        self.assertEqual(self.bridge._verification_targets, {})
+        self.assertEqual(self.bridge._pending_targets, {shade_id: 80})
         self.assertIn((topics.position, "42", True, 1), self.publisher.published)
         self.assertNotIn(
             (topics.availability, "offline", True, 1), self.publisher.published
         )
+
+    async def test_duplicate_target_does_not_restart_position_verification(self) -> None:
+        topics = topics_for(self.config, self.config.shades[0])
+        shade_id = self.config.shades[0].id
+        self.client.position_error = PositionVerificationPending(
+            "still moving", ShadeStatus(420, 87, 0, True)
+        )
+
+        with patch("tilt_local_bridge.tilt_mqtt._POSITION_RECONCILE_DELAYS", (3600,)):
+            await self.bridge.handle_message(
+                IncomingMqttMessage(topics.set_position, b"70")
+            )
+            await asyncio.sleep(0.01)
+            await self.bridge.handle_message(
+                IncomingMqttMessage(topics.set_position, b"70")
+            )
+            await asyncio.sleep(0.01)
+
+        self.assertEqual(self.client.targets, [70])
+        self.assertEqual(self.bridge._pending_targets, {})
+        self.assertEqual(self.bridge._verification_targets, {shade_id: 70})
+
+    async def test_superseding_command_runs_after_verification_is_dropped(self) -> None:
+        topics = topics_for(self.config, self.config.shades[0])
+        self.client.position_error = PositionVerificationPending(
+            "still moving", ShadeStatus(420, 87, 0, True)
+        )
+
+        with patch("tilt_local_bridge.tilt_mqtt._POSITION_RECONCILE_DELAYS", (3600,)):
+            await self.bridge.handle_message(
+                IncomingMqttMessage(topics.set_position, b"70")
+            )
+            await asyncio.sleep(0.01)
+            self.client.position_error = None
+            await self.bridge.handle_message(
+                IncomingMqttMessage(topics.set_position, b"80")
+            )
+            await asyncio.sleep(self.config.command_cooldown_seconds + 0.05)
+
+        self.assertEqual(self.client.targets, [70, 80])
+        self.assertEqual(self.bridge._pending_targets, {})
+        self.assertEqual(self.bridge._verification_targets, {})
+
+    async def test_cooldown_wakeup_does_not_skip_position_verification(self) -> None:
+        topics = topics_for(self.config, self.config.shades[0])
+        shade_id = self.config.shades[0].id
+        self.bridge._config = replace(
+            self.config,
+            command_cooldown_seconds=0.05,
+        )
+
+        await self.bridge.handle_message(
+            IncomingMqttMessage(topics.set_position, b"60")
+        )
+        await asyncio.sleep(0.01)
+        before_reads = self.client.reads
+        self.client.position_error = PositionVerificationPending(
+            "still moving", ShadeStatus(600, 87, 0, True)
+        )
+
+        with patch("tilt_local_bridge.tilt_mqtt._POSITION_RECONCILE_DELAYS", (3600,)):
+            await self.bridge.handle_message(
+                IncomingMqttMessage(topics.set_position, b"70")
+            )
+            await asyncio.sleep(0.01)
+            await self.bridge.handle_message(
+                IncomingMqttMessage(topics.set_position, b"80")
+            )
+            await asyncio.sleep(0.06)
+
+        self.assertEqual(self.client.targets, [60, 80])
+        self.assertEqual(self.client.reads, before_reads)
+        self.assertEqual(self.bridge._verification_targets, {shade_id: 80})
 
     async def test_moving_shade_reconciles_to_verified_position(self) -> None:
         topics = topics_for(self.config, self.config.shades[0])

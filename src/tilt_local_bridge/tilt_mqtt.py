@@ -185,7 +185,6 @@ class TiltMqttBridge:
         self._available_shades: set[str] = set()
         self._pending_targets: dict[str, int] = {}
         self._verification_targets: dict[str, int] = {}
-        self._commands_in_flight: set[str] = set()
         self._command_events = {shade.id: asyncio.Event() for shade in config.shades}
         self._workers: list[asyncio.Task[None]] = []
         self._refresh_lock = asyncio.Lock()
@@ -272,10 +271,21 @@ class TiltMqttBridge:
             target is None
             or shade_id not in self._shade_clients
             or shade_id not in self._available_shades
-            or shade_id in self._verification_targets
-            or shade_id in self._commands_in_flight
         ):
             return
+        if shade_id in self._verification_targets:
+            if target == self._verification_targets[shade_id]:
+                _LOGGER.info(
+                    "Tilt shade %s is already verifying position %s; ignoring duplicate",
+                    shade_id,
+                    target,
+                )
+                return
+            _LOGGER.info(
+                "Tilt shade %s asked for position %s while verifying; superseding",
+                shade_id,
+                target,
+            )
         self._pending_targets[shade_id] = target
         self._command_events[shade_id].set()
 
@@ -321,50 +331,66 @@ class TiltMqttBridge:
             )
             if wait_seconds > 0:
                 await asyncio.sleep(wait_seconds)
-            target = self._pending_targets.pop(shade_id, None)
-            if target is None:
-                continue
             client = self._shade_clients.get(shade_id)
             if client is None:
+                self._pending_targets.pop(shade_id, None)
+                event.clear()
                 continue
-            last_attempt = time.monotonic()
-            self._commands_in_flight.add(shade_id)
-            try:
-                verification_pending = False
-                async with self._refresh_lock:
-                    if shade_id not in self._available_shades:
-                        continue
-                    try:
-                        status, _moved = await client.set_position_and_read_status(target)
-                    except PositionVerificationPending as exc:
-                        self._verification_targets[shade_id] = target
-                        self._publish_status(shade_id, exc.status)
-                        verification_pending = True
-                        _LOGGER.info(
-                            "Tilt shade %s is still moving toward position %s; verification pending",
-                            shade_id,
-                            target,
-                        )
-                    except Exception as exc:
-                        self._available_shades.discard(shade_id)
-                        self._publisher.publish(
-                            self._topics[shade_id].availability, "offline", retain=True
-                        )
-                        _LOGGER.warning(
-                            "Tilt shade %s position request failed: %s",
-                            shade_id,
-                            type(exc).__name__,
-                        )
-                        continue
-                    else:
-                        self._publish_status(shade_id, status)
-                if verification_pending:
-                    await self._reconcile_position(shade_id, target)
+            verification_pending = False
+            async with self._refresh_lock:
+                # Polling may have held the lock while Home Assistant sent a
+                # newer target. Select the latest target only when the BLE
+                # operation can actually begin, then consume its wakeup.
+                target = self._pending_targets.pop(shade_id, None)
+                event.clear()
+                if target is None:
                     continue
-            finally:
-                self._commands_in_flight.discard(shade_id)
+                if shade_id not in self._available_shades:
+                    continue
+                last_attempt = time.monotonic()
+                try:
+                    status, _moved = await client.set_position_and_read_status(target)
+                except PositionVerificationPending as exc:
+                    self._verification_targets[shade_id] = target
+                    self._publish_status(shade_id, exc.status)
+                    verification_pending = True
+                    _LOGGER.info(
+                        "Tilt shade %s is still moving toward position %s; verification pending",
+                        shade_id,
+                        target,
+                    )
+                except Exception as exc:
+                    self._available_shades.discard(shade_id)
+                    self._publisher.publish(
+                        self._topics[shade_id].availability, "offline", retain=True
+                    )
+                    _LOGGER.warning(
+                        "Tilt shade %s position request failed: %s",
+                        shade_id,
+                        type(exc).__name__,
+                    )
+                    continue
+                else:
+                    self._publish_status(shade_id, status)
+            if verification_pending:
+                await self._reconcile_position(shade_id, target)
+                continue
             if shade_id in self._pending_targets:
                 event.set()
+
+    async def _superseded_within(self, shade_id: str, delay: float) -> bool:
+        """Wait out the delay, returning True as soon as a newer target is queued.
+
+        The command event is only ever set alongside a pending target, so an
+        event seen here means Home Assistant asked for a different position
+        while the previous one was still being verified.
+        """
+
+        try:
+            await asyncio.wait_for(self._command_events[shade_id].wait(), timeout=delay)
+        except TimeoutError:
+            return False
+        return shade_id in self._pending_targets
 
     async def _reconcile_position(self, shade_id: str, target: int) -> None:
         client = self._shade_clients.get(shade_id)
@@ -374,7 +400,14 @@ class TiltMqttBridge:
         observed_status = False
         last_error: Exception | None = None
         for delay in _POSITION_RECONCILE_DELAYS:
-            await asyncio.sleep(delay)
+            if await self._superseded_within(shade_id, delay):
+                self._verification_targets.pop(shade_id, None)
+                _LOGGER.info(
+                    "Tilt shade %s dropped verification of position %s for a newer command",
+                    shade_id,
+                    target,
+                )
+                return
             if self._verification_targets.get(shade_id) != target:
                 return
             try:
