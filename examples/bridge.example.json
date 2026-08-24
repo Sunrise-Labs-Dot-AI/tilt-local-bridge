@@ -20,6 +20,12 @@
       "pairing_key_file": "/etc/tilt-local-bridge/keys/office_shade.key"
     }
   ],
-  "poll_interval_seconds": 120,
+  "poll_interval_seconds": 1800,
+  "quiet_hours": {
+    "timezone": "America/Los_Angeles",
+    "start": "23:00",
+    "end": "06:00",
+    "poll_interval_seconds": 7200
+  },
   "command_cooldown_seconds": 5
 }

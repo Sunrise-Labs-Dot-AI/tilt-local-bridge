@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from dataclasses import replace
+from datetime import datetime, time as wall_time, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +18,7 @@ from tilt_local_bridge.tilt_ble import (
 from tilt_local_bridge.tilt_bridge_config import (
     BridgeAccessConfig,
     MqttConfig,
+    QuietHoursConfig,
     ShadeConfig,
     TiltBridgeConfig,
     authorize_shade_access,
@@ -103,6 +106,22 @@ class FakeShadeClient:
         return self.status, True
 
 
+class MutableClock:
+    def __init__(self, wall: datetime, monotonic: float = 0.0) -> None:
+        self.wall = wall
+        self.monotonic = monotonic
+
+    def wall_now(self) -> datetime:
+        return self.wall
+
+    def monotonic_now(self) -> float:
+        return self.monotonic
+
+    def advance(self, seconds: float) -> None:
+        self.wall += timedelta(seconds=seconds)
+        self.monotonic += seconds
+
+
 class DiscoveryTests(unittest.TestCase):
     def test_cover_exposes_no_stop_or_raw_command(self) -> None:
         config = _config()
@@ -156,6 +175,76 @@ class DiscoveryTests(unittest.TestCase):
         ):
             with self.subTest(message=message):
                 self.assertIsNone(parse_position_command(message, topics))
+
+
+class PollSchedulingTests(unittest.IsolatedAsyncioTestCase):
+    def _bridge(self, clock: MutableClock) -> TiltMqttBridge:
+        config = replace(
+            _config(),
+            poll_interval_seconds=1800,
+            quiet_hours=QuietHoursConfig(
+                timezone="America/Los_Angeles",
+                start=wall_time(23, 0),
+                end=wall_time(6, 0),
+                poll_interval_seconds=7200,
+            ),
+        )
+        return TiltMqttBridge(
+            config,
+            FakePublisher(),
+            {config.shades[0].id: FakeShadeClient()},  # type: ignore[dict-item]
+            wall_clock=clock.wall_now,
+            monotonic_clock=clock.monotonic_now,
+        )
+
+    async def test_entering_quiet_hours_extends_the_next_idle_poll(self) -> None:
+        clock = MutableClock(datetime(2026, 1, 16, 6, 30, tzinfo=timezone.utc))
+        bridge = self._bridge(clock)
+        bridge._last_refresh_monotonic = 0.0
+        sleeps: list[float] = []
+
+        async def sleep_and_advance(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock.advance(seconds)
+
+        async def refresh_once() -> None:
+            bridge._stopping = True
+
+        bridge.refresh_all = AsyncMock(side_effect=refresh_once)  # type: ignore[method-assign]
+        with patch(
+            "tilt_local_bridge.tilt_mqtt.asyncio.sleep",
+            side_effect=sleep_and_advance,
+        ):
+            await bridge._poll_loop()
+
+        self.assertEqual(sleeps, [1800, 5400])
+        bridge.refresh_all.assert_awaited_once()  # type: ignore[attr-defined]
+
+    async def test_leaving_quiet_hours_does_not_oversleep_daytime_poll(self) -> None:
+        clock = MutableClock(
+            datetime(2026, 1, 16, 13, 59, tzinfo=timezone.utc),
+            monotonic=5400.0,
+        )
+        bridge = self._bridge(clock)
+        bridge._last_refresh_monotonic = 0.0
+        sleeps: list[float] = []
+
+        async def sleep_and_advance(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock.advance(seconds)
+
+        async def refresh_once() -> None:
+            bridge._stopping = True
+
+        bridge.refresh_all = AsyncMock(side_effect=refresh_once)  # type: ignore[method-assign]
+        with patch(
+            "tilt_local_bridge.tilt_mqtt.asyncio.sleep",
+            side_effect=sleep_and_advance,
+        ):
+            await bridge._poll_loop()
+
+        self.assertEqual(sleeps, [60])
+        bridge.refresh_all.assert_awaited_once()  # type: ignore[attr-defined]
 
 
 class BridgeBehaviorTests(unittest.IsolatedAsyncioTestCase):

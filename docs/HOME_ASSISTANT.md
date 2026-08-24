@@ -22,6 +22,29 @@ MQTT discovery is enabled by default. The bridge also listens for Home
 Assistant's `homeassistant/status` birth message and republishes discovery after
 Home Assistant restarts.
 
+## Add a low-battery alert
+
+The repository includes a reusable Home Assistant blueprint. It creates a
+persistent notification after one battery sensor stays below 40 percent for 30
+minutes, reminds twice daily while the battery remains low, and dismisses the
+notification after the battery rises above 50 percent. The gap between the two
+thresholds prevents a noisy battery reading from repeatedly clearing and
+reopening the alert.
+
+1. Open **Settings**, **Automations & scenes**, then **Blueprints**.
+2. Import this blueprint URL:
+   `https://github.com/Sunrise-Labs-Dot-AI/tilt-local-bridge/blob/main/blueprints/automation/tilt_local_bridge/low_battery_alert.yaml`
+3. Select **Create automation**, choose one shade's Battery entity, and adjust
+   the thresholds if needed.
+4. Optionally add a mobile notification under **Additional notification
+   actions**.
+5. Repeat for each shade.
+
+The first low reading and each twice-daily reminder are debounced. A Home
+Assistant restart checks the current reading directly so an already-low battery
+is not forgotten after automations reload. Home Assistant's numeric-state
+debounce does not survive a restart, so this startup check is intentional.
+
 ## Enable position writes
 
 There are two gates. Both must be enabled.

@@ -7,12 +7,15 @@ import os
 import re
 import stat
 from dataclasses import dataclass, field
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 _ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _MAC_PATTERN = re.compile(r"^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$")
+_TIME_PATTERN = re.compile(r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
 _PERMIT_MARKER = object()
 
 
@@ -50,13 +53,58 @@ class BridgeAccessConfig:
 
 
 @dataclass(frozen=True)
+class QuietHoursConfig:
+    timezone: str
+    start: time
+    end: time
+    poll_interval_seconds: int
+
+    def is_active(self, moment: datetime) -> bool:
+        """Return whether an aware instant falls inside the local quiet window."""
+
+        local_time = self._local_datetime(moment).time().replace(tzinfo=None)
+        if self.start < self.end:
+            return self.start <= local_time < self.end
+        return local_time >= self.start or local_time < self.end
+
+    def seconds_until_transition(self, moment: datetime) -> float:
+        """Return elapsed seconds until the quiet window next changes state."""
+
+        local_now = self._local_datetime(moment)
+        boundary = self.end if self.is_active(moment) else self.start
+        utc_now = local_now.astimezone(timezone.utc)
+        zone = local_now.tzinfo
+        assert zone is not None
+        for day_offset in range(3):
+            candidate = datetime.combine(
+                local_now.date() + timedelta(days=day_offset),
+                boundary,
+                tzinfo=zone,
+            ).astimezone(timezone.utc)
+            if candidate > utc_now:
+                return (candidate - utc_now).total_seconds()
+        raise RuntimeError("Unable to determine the next quiet-hours transition.")
+
+    def _local_datetime(self, moment: datetime) -> datetime:
+        if moment.tzinfo is None or moment.utcoffset() is None:
+            raise ValueError("Quiet-hours checks require an aware datetime.")
+        return moment.astimezone(ZoneInfo(self.timezone))
+
+
+@dataclass(frozen=True)
 class TiltBridgeConfig:
     version: int
     access: BridgeAccessConfig
     mqtt: MqttConfig
     shades: tuple[ShadeConfig, ...]
-    poll_interval_seconds: int = 120
+    poll_interval_seconds: int = 1800
+    quiet_hours: QuietHoursConfig | None = None
     command_cooldown_seconds: int = 5
+
+    def poll_interval_at(self, moment: datetime) -> int:
+        if self.quiet_hours is not None and self.quiet_hours.is_active(moment):
+            return self.quiet_hours.poll_interval_seconds
+        return self.poll_interval_seconds
 
 
 @dataclass(frozen=True)
@@ -105,7 +153,12 @@ def load_config(path: Path) -> TiltBridgeConfig:
     _require_keys(
         raw,
         required={"version", "mqtt", "shades"},
-        optional={"access", "poll_interval_seconds", "command_cooldown_seconds"},
+        optional={
+            "access",
+            "poll_interval_seconds",
+            "quiet_hours",
+            "command_cooldown_seconds",
+        },
         context="bridge config",
     )
     version = _require_int(raw["version"], "version", minimum=1, maximum=1)
@@ -116,16 +169,21 @@ def load_config(path: Path) -> TiltBridgeConfig:
         raise TiltBridgeConfigError("shades must be a non-empty list.")
     shades = tuple(_parse_shade(value, index) for index, value in enumerate(shade_values))
     _require_unique_shades(shades)
+    poll_interval_seconds = _require_int(
+        raw.get("poll_interval_seconds", 1800),
+        "poll_interval_seconds",
+        minimum=30,
+        maximum=3600,
+    )
     return TiltBridgeConfig(
         version=version,
         access=access,
         mqtt=mqtt,
         shades=shades,
-        poll_interval_seconds=_require_int(
-            raw.get("poll_interval_seconds", 120),
-            "poll_interval_seconds",
-            minimum=30,
-            maximum=3600,
+        poll_interval_seconds=poll_interval_seconds,
+        quiet_hours=_parse_quiet_hours(
+            raw.get("quiet_hours"),
+            regular_poll_interval_seconds=poll_interval_seconds,
         ),
         command_cooldown_seconds=_require_int(
             raw.get("command_cooldown_seconds", 5),
@@ -133,6 +191,49 @@ def load_config(path: Path) -> TiltBridgeConfig:
             minimum=2,
             maximum=60,
         ),
+    )
+
+
+def _parse_quiet_hours(
+    value: object,
+    *,
+    regular_poll_interval_seconds: int,
+) -> QuietHoursConfig | None:
+    if value is None:
+        return None
+    raw = _require_mapping(value, "quiet_hours")
+    _require_keys(
+        raw,
+        required={"timezone", "start", "end", "poll_interval_seconds"},
+        optional=set(),
+        context="quiet_hours",
+    )
+    timezone_name = _require_nonempty_string(raw["timezone"], "quiet_hours.timezone")
+    try:
+        ZoneInfo(timezone_name)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise TiltBridgeConfigError(
+            "quiet_hours.timezone must be a valid IANA timezone."
+        ) from exc
+    start = _require_time(raw["start"], "quiet_hours.start")
+    end = _require_time(raw["end"], "quiet_hours.end")
+    if start == end:
+        raise TiltBridgeConfigError("quiet_hours.start and quiet_hours.end must differ.")
+    poll_interval_seconds = _require_int(
+        raw["poll_interval_seconds"],
+        "quiet_hours.poll_interval_seconds",
+        minimum=30,
+        maximum=86400,
+    )
+    if poll_interval_seconds < regular_poll_interval_seconds:
+        raise TiltBridgeConfigError(
+            "quiet_hours.poll_interval_seconds must be at least poll_interval_seconds."
+        )
+    return QuietHoursConfig(
+        timezone=timezone_name,
+        start=start,
+        end=end,
+        poll_interval_seconds=poll_interval_seconds,
     )
 
 
@@ -301,6 +402,14 @@ def _require_nonempty_string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip() or value != value.strip():
         raise TiltBridgeConfigError(f"{label} must be a non-empty trimmed string.")
     return value
+
+
+def _require_time(value: object, label: str) -> time:
+    text = _require_nonempty_string(value, label)
+    if not _TIME_PATTERN.fullmatch(text):
+        raise TiltBridgeConfigError(f"{label} must use 24-hour HH:MM format.")
+    hour, minute = (int(part) for part in text.split(":"))
+    return time(hour=hour, minute=minute)
 
 
 def _require_absolute_path(value: object, label: str) -> Path:

@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from tilt_local_bridge.tilt_bridge_config import (
@@ -52,8 +53,83 @@ class ConfigParsingTests(unittest.TestCase):
         config = self._load(_config_payload())
         self.assertFalse(config.access.allow_reads)
         self.assertFalse(config.access.allow_position_writes)
+        self.assertEqual(config.poll_interval_seconds, 1800)
+        self.assertIsNone(config.quiet_hours)
         self.assertEqual(config.shades[0].mac, "02:00:00:00:00:01")
         self.assertNotIn("pairing_key", repr(config.shades[0]))
+
+    def test_overnight_quiet_hours_use_the_configured_timezone(self) -> None:
+        payload = _config_payload()
+        payload["poll_interval_seconds"] = 1800
+        payload["quiet_hours"] = {
+            "timezone": "America/Los_Angeles",
+            "start": "23:00",
+            "end": "06:00",
+            "poll_interval_seconds": 7200,
+        }
+        config = self._load(payload)
+        quiet_hours = config.quiet_hours
+        assert quiet_hours is not None
+
+        for moment, active in (
+            (datetime(2026, 1, 16, 6, 59, tzinfo=timezone.utc), False),
+            (datetime(2026, 1, 16, 7, 0, tzinfo=timezone.utc), True),
+            (datetime(2026, 1, 16, 13, 59, tzinfo=timezone.utc), True),
+            (datetime(2026, 1, 16, 14, 0, tzinfo=timezone.utc), False),
+            (datetime(2026, 7, 16, 5, 59, tzinfo=timezone.utc), False),
+            (datetime(2026, 7, 16, 6, 0, tzinfo=timezone.utc), True),
+            (datetime(2026, 7, 16, 12, 59, tzinfo=timezone.utc), True),
+            (datetime(2026, 7, 16, 13, 0, tzinfo=timezone.utc), False),
+        ):
+            with self.subTest(moment=moment):
+                self.assertEqual(quiet_hours.is_active(moment), active)
+                expected_interval = 7200 if active else 1800
+                self.assertEqual(config.poll_interval_at(moment), expected_interval)
+
+    def test_quiet_transition_duration_accounts_for_dst(self) -> None:
+        payload = _config_payload()
+        payload["quiet_hours"] = {
+            "timezone": "America/Los_Angeles",
+            "start": "23:00",
+            "end": "06:00",
+            "poll_interval_seconds": 7200,
+        }
+        quiet_hours = self._load(payload).quiet_hours
+        assert quiet_hours is not None
+
+        before_spring_forward = datetime(2026, 3, 8, 8, 0, tzinfo=timezone.utc)
+        before_fall_back = datetime(2026, 11, 1, 7, 0, tzinfo=timezone.utc)
+        self.assertEqual(
+            quiet_hours.seconds_until_transition(before_spring_forward),
+            5 * 3600,
+        )
+        self.assertEqual(
+            quiet_hours.seconds_until_transition(before_fall_back),
+            7 * 3600,
+        )
+
+    def test_invalid_quiet_hours_are_rejected(self) -> None:
+        valid = {
+            "timezone": "America/Los_Angeles",
+            "start": "23:00",
+            "end": "06:00",
+            "poll_interval_seconds": 7200,
+        }
+        invalid_values = (
+            {**valid, "timezone": "Mars/Olympus"},
+            {**valid, "start": "7:00"},
+            {**valid, "end": "23:00"},
+            {**valid, "poll_interval_seconds": 1799},
+            {**valid, "surprise": True},
+        )
+        for quiet_hours in invalid_values:
+            payload = _config_payload()
+            payload["poll_interval_seconds"] = 1800
+            payload["quiet_hours"] = quiet_hours
+            with self.subTest(quiet_hours=quiet_hours), self.assertRaises(
+                TiltBridgeConfigError
+            ):
+                self._load(payload)
 
     def test_unknown_fields_and_embedded_keys_are_rejected(self) -> None:
         for field, value in (("surprise", True), ("pairing_key", "00" * 32)):
