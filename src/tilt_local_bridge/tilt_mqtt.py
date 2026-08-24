@@ -274,6 +274,13 @@ class TiltMqttBridge:
         ):
             return
         if shade_id in self._verification_targets:
+            if target == self._verification_targets[shade_id]:
+                _LOGGER.info(
+                    "Tilt shade %s is already verifying position %s; ignoring duplicate",
+                    shade_id,
+                    target,
+                )
+                return
             _LOGGER.info(
                 "Tilt shade %s asked for position %s while verifying; superseding",
                 shade_id,
@@ -324,17 +331,23 @@ class TiltMqttBridge:
             )
             if wait_seconds > 0:
                 await asyncio.sleep(wait_seconds)
-            target = self._pending_targets.pop(shade_id, None)
-            if target is None:
-                continue
             client = self._shade_clients.get(shade_id)
             if client is None:
+                self._pending_targets.pop(shade_id, None)
+                event.clear()
                 continue
-            last_attempt = time.monotonic()
             verification_pending = False
             async with self._refresh_lock:
+                # Polling may have held the lock while Home Assistant sent a
+                # newer target. Select the latest target only when the BLE
+                # operation can actually begin, then consume its wakeup.
+                target = self._pending_targets.pop(shade_id, None)
+                event.clear()
+                if target is None:
+                    continue
                 if shade_id not in self._available_shades:
                     continue
+                last_attempt = time.monotonic()
                 try:
                     status, _moved = await client.set_position_and_read_status(target)
                 except PositionVerificationPending as exc:
