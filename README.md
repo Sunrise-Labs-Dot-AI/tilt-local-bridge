@@ -24,7 +24,8 @@ Tilt or SmarterHome roller shades to Home Assistant.
 
 Use https://github.com/Sunrise-Labs-Dot-AI/tilt-local-bridge as the source of
 truth. Read README.md, SECURITY.md, docs/SETUP.md, docs/PAIRING.md,
-docs/HOME_ASSISTANT.md, and docs/TROUBLESHOOTING.md before acting. Inspect my
+docs/HOME_ASSISTANT.md, docs/REMOTES.md, and docs/TROUBLESHOOTING.md before
+acting. Inspect my
 environment before changing it, confirm which machine is the Raspberry Pi, and
 use SSH only after I confirm any new or changed host key. Never bypass SSH host
 key verification.
@@ -72,6 +73,8 @@ give you the smallest next action. The manual path remains below.
 - Multiple shades from one Raspberry Pi
 - MQTT discovery, so no custom Home Assistant component is required
 - Optional Home Assistant low-battery alert blueprint
+- Optional Lutron Caseta Pico remote control through a position-mapped
+  blueprint
 - Optional one-shot pairing with credentials entered interactively and never
   written to disk
 - Conservative position verification while a shade is moving
@@ -99,7 +102,8 @@ It has no reset, calibration, rename, firmware, or arbitrary-command interface.
 2. Follow the [Raspberry Pi and Home Assistant setup](docs/SETUP.md).
 3. Use [pairing and key recovery](docs/PAIRING.md) for each shade.
 4. Enable [position control](docs/HOME_ASSISTANT.md).
-5. Optionally expose the cover to [Google Home](docs/GOOGLE_HOME.md).
+5. Optionally add a [physical remote](docs/REMOTES.md).
+6. Optionally expose the cover to [Google Home](docs/GOOGLE_HOME.md).
 
 Replacing the Raspberry Pi requires moving the protected configuration and
 pairing keys before the old bridge is retired. Follow the

@@ -45,6 +45,17 @@ Assistant restart checks the current reading directly so an already-low battery
 is not forgotten after automations reload. Home Assistant's numeric-state
 debounce does not survive a restart, so this startup check is intentional.
 
+## Add a physical remote
+
+A wall remote must map every button to a position. The bridge publishes no stop
+command, so `cover.stop_cover` does nothing and a conventional up/stop/down
+remote has a dead middle button.
+
+The repository includes a blueprint for Lutron Caséta Pico remotes that maps the
+five buttons to open, close, a favorite position, and a step up or down. See
+[physical remotes](REMOTES.md) for the wiring, the pairing steps, and how to
+adapt the pattern to a non-Lutron remote.
+
 ## Enable position writes
 
 There are two gates. Both must be enabled.

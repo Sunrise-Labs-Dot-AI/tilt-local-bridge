@@ -1,0 +1,185 @@
+blueprint:
+  name: Tilt Local Bridge Pico shade control
+  description: >-
+    Maps a Lutron Caseta Pico remote to absolute shade positions. The bridge
+    publishes no stop command, so every button selects a position and the
+    raise and lower buttons move by a fixed step instead of holding the shade
+    in motion. Nothing here asks a shade to stop, because the bridge offers no
+    way to do it. Create one automation per remote.
+  domain: automation
+  source_url: https://github.com/Sunrise-Labs-Dot-AI/tilt-local-bridge/blob/main/blueprints/automation/tilt_local_bridge/pico_shade_control.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    pico_device:
+      name: Pico remote
+      description: >-
+        The remote to listen to. Pick the Pico itself, not a dimmer or switch.
+        Presses reach Home Assistant whatever the remote is bound to in the
+        Lutron app, so it does not need to control a Lutron device.
+      selector:
+        device:
+          filter:
+            - integration: lutron_caseta
+    covers:
+      name: Shades
+      description: >-
+        One or more shade covers. The raise and lower buttons step each shade
+        from its own position, so shades left at different heights keep their
+        offset.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: cover
+    open_position:
+      name: Open button position
+      description: Position applied by the top (on) button.
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    closed_position:
+      name: Close button position
+      description: Position applied by the bottom (off) button.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    favorite_position:
+      name: Favorite button position
+      description: >-
+        Position applied by the middle button. Lutron reports this button as
+        "stop" for historic lighting reasons; on a shade it is the favorite
+        preset and never stops movement.
+      default: 50
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    step_size:
+      name: Step size
+      description: >-
+        Points the raise and lower buttons move per press. The result is
+        snapped to the nearest multiple of this value, so repeated presses
+        walk a predictable ladder.
+      default: 25
+      selector:
+        number:
+          min: 1
+          max: 50
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    favorite_use_actions:
+      name: Use custom actions for the favorite button
+      description: >-
+        Run the actions below instead of applying the favorite position. Use
+        this when the shades should not all go to the same place, such as
+        closing one shade while leaving another part-way open.
+      default: false
+      selector:
+        boolean: {}
+    favorite_actions:
+      name: Favorite button actions
+      description: >-
+        Optional actions for the middle button. Ignored unless the setting
+        above is enabled.
+      default: []
+      selector:
+        action: {}
+
+variables:
+  covers: !input covers
+  open_position: !input open_position
+  closed_position: !input closed_position
+  favorite_position: !input favorite_position
+  step_size: !input step_size
+  favorite_use_actions: !input favorite_use_actions
+  button: "{{ trigger.event.data.button_type | default('', true) }}"
+
+triggers:
+  - trigger: event
+    event_type: lutron_caseta_button_event
+    event_data:
+      device_id: !input pico_device
+      action: press
+
+conditions: []
+
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ button == 'on' }}"
+        sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input covers
+            data:
+              position: "{{ open_position | int }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ button == 'off' }}"
+        sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input covers
+            data:
+              position: "{{ closed_position | int }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ button == 'stop' }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ favorite_use_actions }}"
+            then: !input favorite_actions
+            else:
+              - action: cover.set_cover_position
+                target:
+                  entity_id: !input covers
+                data:
+                  position: "{{ favorite_position | int }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ button in ['raise', 'lower'] }}"
+        sequence:
+          - repeat:
+              for_each: "{{ covers }}"
+              sequence:
+                - variables:
+                    current: >-
+                      {{ state_attr(repeat.item, 'current_position') }}
+                - if:
+                    - condition: template
+                      value_template: >-
+                        {{ current not in [none, 'None', 'unknown',
+                        'unavailable', ''] }}
+                  then:
+                    - action: cover.set_cover_position
+                      target:
+                        entity_id: "{{ repeat.item }}"
+                      data:
+                        position: >-
+                          {% set step = step_size | int %}
+                          {% set cur = current | int %}
+                          {% set up = button == 'raise' %}
+                          {% set rung = (cur // step) if up else -((-cur) // step) %}
+                          {% set snapped = (rung + (1 if up else -1)) * step %}
+                          {{ [[snapped, 0] | max, 100] | min }}
+
+mode: queued
+max: 10
+max_exceeded: silent
