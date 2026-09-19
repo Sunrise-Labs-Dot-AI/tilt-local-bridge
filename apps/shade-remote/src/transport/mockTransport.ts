@@ -229,10 +229,14 @@ export class MockBridge {
   private reply(session: { publicKey: string | null; send: (payload: Uint8Array) => void }, message: Record<string, Json>): void {
     const withTo = session.publicKey ? { ...message, to: session.publicKey.slice(0, 8) } : message;
     const payload = utf8Encode(JSON.stringify(withTo));
-    for (const chunk of chunkMessage(payload, this.options.chunkSize)) {
-      // Deliver asynchronously, the way notifications arrive.
-      setTimeout(() => session.send(chunk), 0);
-    }
+    const chunks = chunkMessage(payload, this.options.chunkSize);
+    // Deliver asynchronously, the way notifications arrive, but all of one
+    // message's chunks inside a single timer callback. iOS does not keep
+    // zero-delay timers in scheduling order, and a reordered chunk would be
+    // dropped by the assembler the way a lost notification would.
+    setTimeout(() => {
+      for (const chunk of chunks) session.send(chunk);
+    }, 0);
   }
 }
 
