@@ -14,6 +14,7 @@ from tilt_local_bridge.tilt_remote import (
     APPROVE_PAIRING_PAYLOAD,
     DENY_PAIRING_PAYLOAD,
     MAX_MESSAGE_BYTES,
+    PAIRING_PROBE_SECONDS,
     PAIRING_TTL_SECONDS,
     SESSION_IDLE_SECONDS,
     MessageAssembler,
@@ -256,6 +257,8 @@ class ProtocolHarness:
             monotonic_clock=self.clock,
             random_code=lambda: next(self.codes),
         )
+        # Deterministic challenge: the first candidate shade, direction "up".
+        self.protocol._random_choice = lambda options: options[0]
         self.protocol.set_sender(self._send)
         self.protocol.start()
 
@@ -325,8 +328,9 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply["status"], "pending")
         self.assertEqual(reply["code"], "482913")
         self.assertEqual(reply["expires_in"], int(PAIRING_TTL_SECONDS))
+        self.assertEqual(reply["challenge"], {"shade": "door", "name": "Door", "direction": "up"})
         self.assertEqual(
-            self.harness.bridge.pairing_texts[-1], "James’s iPhone (code 482913)"
+            self.harness.bridge.pairing_texts[-1], "James’s iPhone (code 482913): tap up on Door"
         )
         # Asking again keeps the same code and consumes the rotated nonce.
         again = await self.harness.signed("dev_a", {"t": "pair", "name": "x"}, nonce=reply["n"])
@@ -353,6 +357,82 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["shades"][0]["id"], "door")
         self.assertEqual(status["shades"][0]["position"], 40)
         self.assertEqual(status["shades"][1]["available"], False)
+
+    async def _request_pairing(self) -> dict[str, Any]:
+        nonce = (await self.harness.nonce("dev_a"))["n"]
+        return await self.harness.signed("dev_a", {"t": "pair", "name": "A"}, nonce=nonce)
+
+    def _door_at(self, position: int, *, target: int | None = None, commanded_at: float | None = None) -> None:
+        _door, right = self.harness.bridge.snapshots
+        self.harness.bridge.snapshots = (
+            ShadeSnapshot("door", "Door", position, 90, True, target, 1, commanded_at),
+            right,
+        )
+
+    async def test_pressing_the_named_button_approves_without_any_network(self) -> None:
+        reply = await self._request_pairing()
+        self.assertEqual(reply["challenge"]["direction"], "up")
+        self._door_at(70)
+        self.harness.protocol.notify_status_changed("door")
+        await asyncio.sleep(0.01)
+        self.assertTrue(self.harness.store.is_paired(PUBLIC_KEY))
+        self.assertEqual(self.harness.sent[-1][1], {"t": "pair", "status": "approved", "to": PUBLIC_KEY[:8]})
+        self.assertIsNone(self.harness.bridge.pairing_texts[-1])
+
+    async def test_wrong_direction_or_shade_denies(self) -> None:
+        reply = await self._request_pairing()
+        self._door_at(10)  # asked for up, moved down
+        self.harness.protocol.notify_status_changed("door")
+        await asyncio.sleep(0.01)
+        self.assertFalse(self.harness.store.is_paired(PUBLIC_KEY))
+        self.assertEqual(self.harness.sent[-1][1]["status"], "denied")
+        status = await self.harness.signed("dev_a", {"t": "pair_status"}, nonce=reply["n"])
+        self.assertEqual(status["status"], "denied")
+
+    async def test_bridge_commanded_or_tiny_movements_do_not_count(self) -> None:
+        await self._request_pairing()
+        self._door_at(43)
+        self.harness.protocol.notify_status_changed("door")
+        await asyncio.sleep(0.01)
+        self._door_at(90, target=90)
+        self.harness.protocol.notify_status_changed("door")
+        await asyncio.sleep(0.01)
+        self._door_at(90, commanded_at=self.harness.clock.now)
+        self.harness.protocol.notify_status_changed("door")
+        await asyncio.sleep(0.01)
+        self.assertIsNotNone(self.harness.protocol.pending)
+        self.assertFalse(self.harness.store.is_paired(PUBLIC_KEY))
+
+    async def test_pending_request_probes_the_shades_on_a_cadence(self) -> None:
+        await self._request_pairing()
+        self.assertEqual(self.harness.protocol.tick(), [])
+        self.harness.clock.now += PAIRING_PROBE_SECONDS
+        work = self.harness.protocol.tick()
+        self.assertEqual(len(work), 1)
+        self._door_at(80)
+        await work[0]
+        self.assertEqual(self.harness.bridge.refreshes, 1)
+        self.assertTrue(self.harness.store.is_paired(PUBLIC_KEY))
+
+    async def test_challenge_direction_respects_the_ends_of_travel(self) -> None:
+        self._door_at(100)
+        reply = await self._request_pairing()
+        self.assertEqual(reply["challenge"]["direction"], "down")
+        self.harness.protocol.deny_pending("test")
+        self._door_at(0)
+        nonce = (await self.harness.nonce("dev_a"))["n"]
+        reply = await self.harness.signed("dev_a", {"t": "pair", "name": "A"}, nonce=nonce)
+        self.assertEqual(reply["challenge"]["direction"], "up")
+
+    async def test_no_reachable_shade_leaves_only_the_network_paths(self) -> None:
+        self.harness.bridge.snapshots = (ShadeSnapshot("door", "Door", None, None, False, None, None),)
+        reply = await self._request_pairing()
+        self.assertIsNone(reply["challenge"])
+        self.assertEqual(self.harness.bridge.pairing_texts[-1], "A (code 482913)")
+        self.harness.bridge.snapshots = (ShadeSnapshot("door", "Door", 50, 90, True, None, 1),)
+        self.harness.protocol.notify_status_changed("door")
+        await asyncio.sleep(0.01)
+        self.assertFalse(self.harness.store.is_paired(PUBLIC_KEY))
 
     async def test_second_phone_is_told_to_wait(self) -> None:
         nonce_a = (await self.harness.nonce("dev_a"))["n"]
