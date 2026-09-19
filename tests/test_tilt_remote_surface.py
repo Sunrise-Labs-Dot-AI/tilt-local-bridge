@@ -209,6 +209,13 @@ class PairingSurfaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(approve["payload_press"], "APPROVE_PAIRING")
         self.assertEqual(phones["state_topic"], topics.paired_phones)
         self.assertEqual(request["device"]["identifiers"], ["tilt_local_bridge"])
+        self.assertEqual(request["device"]["name"], "Tilt Local Bridge")
+        named = _config(remote=BluetoothRemoteConfig(enabled=True, name="Office Bridge"))
+        request_named, approve_named, _phones = (
+            json.loads(p) for p in pairing_discovery_payloads(named)
+        )
+        self.assertEqual(request_named["device"]["name"], "Office Bridge")
+        self.assertEqual(approve_named["device"]["identifiers"], ["tilt_local_bridge"])
         self.assertEqual(topics.command, "tilt/local/bridge/command")
         self.assertEqual(
             topics.approve_pairing_discovery,

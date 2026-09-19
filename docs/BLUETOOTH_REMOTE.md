@@ -78,9 +78,11 @@ Add the section to `/etc/tilt-local-bridge/bridge.json`:
 }
 ```
 
-`name` is what the phone sees while scanning, at most 24 characters. The state
-file holds the bridge identity and the approved phone keys, nothing secret; the
-service creates it with mode `0600` inside a systemd state directory.
+`name` is what the phone sees while scanning, at most 24 characters, and it
+also names the bridge device that Home Assistant creates for the pairing
+entities. The state file holds the bridge identity and the approved phone keys,
+nothing secret; the service creates it with mode `0600` inside a systemd state
+directory.
 
 Reinstall the unit with the launch-time gate. Keep `--allow-position-writes`
 only if the service already had it:

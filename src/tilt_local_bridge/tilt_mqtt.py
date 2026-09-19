@@ -106,9 +106,12 @@ def pairing_discovery_payloads(config: TiltBridgeConfig) -> tuple[str, str, str]
             "payload_not_available": "offline",
         }
     ]
+    remote = config.bluetooth_remote
     device = {
         "identifiers": ["tilt_local_bridge"],
-        "name": "Tilt Local Bridge",
+        # The same name the phone sees while scanning, so the device in Home
+        # Assistant and the bridge in the app are recognisably one thing.
+        "name": remote.name if remote is not None else "Tilt Local Bridge",
         "manufacturer": "Sunrise Labs",
         "model": "Bluetooth phone remote",
     }
