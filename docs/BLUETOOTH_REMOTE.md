@@ -28,12 +28,20 @@ only after a person approves the request somewhere the phone cannot reach on
 its own:
 
 1. The phone connects and asks to pair. The bridge holds one pending request
-   at a time, for two minutes, and answers with a six-digit code.
-2. The phone shows the code. Home Assistant shows the same code and the phone's
-   name in the **Phone pairing request** sensor.
-3. If they match, tap the **Approve phone pairing** button in Home Assistant.
-   Without Home Assistant, check the bridge journal for the code and send the
-   approval signal on the Raspberry Pi instead:
+   at a time, for two minutes, picks one reachable shade and a direction at
+   random, and answers with that challenge plus a six-digit code.
+2. The phone says which button to press: "tap down on Office Shade". Press it
+   on the shade itself. While the request is pending the bridge re-reads the
+   shades every fifteen seconds; the shade it named moving in the direction
+   it named, without the bridge having commanded it, approves the phone. Any
+   other hand movement in the window denies the request, so a wrong press
+   simply means asking again. This path needs no network at all, which is the
+   point of the remote.
+3. When the network is up there are two more ways. Home Assistant shows the
+   phone's name, the code, and the requested press in the **Phone pairing
+   request** sensor; the **Approve phone pairing** button accepts it. On the
+   Raspberry Pi itself, the journal shows the same and the approval signal
+   accepts it:
 
    ```bash
    journalctl -u tilt-local-bridge.service -n 20 --no-pager
@@ -52,8 +60,9 @@ Assistant came from the phone in your hand and not from another radio in range.
 
 Someone in Bluetooth range who is not paired can see the bridge's name, ask to
 pair, and watch that request appear in Home Assistant. They cannot read shade
-state or move a shade. If a request you did not make appears, ignore it; it
-expires on its own.
+state or move a shade, and their request is approved only if a person at the
+shade presses the button it named within two minutes. If a request you did not
+make appears, ignore it; it expires on its own.
 
 ## Two gates, like everything else
 
@@ -222,7 +231,7 @@ big-endian bytes. Chunks are sized to the negotiated MTU minus three.
 | Request | Reply | Notes |
 | --- | --- | --- |
 | `nonce` | `nonce` | Unsigned. Returns the bridge id, name, a nonce, and whether the phone is paired. |
-| `pair` | `pair` | `pending` with a code, `approved`, or `error busy` |
+| `pair` | `pair` | `pending` with a code and the `challenge` (shade, name, direction), `approved`, or `error busy` |
 | `pair_status` | `pair` | `pending`, `approved`, `denied`, `expired`, or `none` |
 | `status` | `status` | Cached position, battery, availability, and target for every shade |
 | `set` | `set` | Queues one absolute position, exactly like a Home Assistant command |

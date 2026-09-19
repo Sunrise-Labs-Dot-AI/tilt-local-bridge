@@ -271,6 +271,7 @@ class TiltMqttBridge:
         self._bridge_command_handler: Callable[[bytes], Awaitable[None]] | None = None
         self._status_listeners: list[Callable[[str], None]] = []
         self._status_updated: dict[str, float] = {}
+        self._commanded_at: dict[str, float] = {}
         self._pairing_request_text: str | None = None
         self._paired_phone_count: int | None = None
         self._publish_failures = 0
@@ -357,6 +358,7 @@ class TiltMqttBridge:
                     available=shade.id in self._available_shades,
                     target_percent=target,
                     age_seconds=int(max(0.0, now - updated)) if updated is not None else None,
+                    commanded_at=self._commanded_at.get(shade.id),
                 )
             )
         return tuple(snapshots)
@@ -382,6 +384,7 @@ class TiltMqttBridge:
                 target,
             )
         self._pending_targets[shade_id] = target
+        self._commanded_at[shade_id] = self._monotonic_clock()
         self._command_events[shade_id].set()
         return "accepted"
 

@@ -118,7 +118,16 @@ describe('reply parsing', () => {
     expect(parseReply({ t: 'nonce', n: 'ab', bridge_id: 'id', name: 'Bridge', paired: false, v: 1, to: key.slice(0, 8) }, key))
       .toEqual({ t: 'nonce', n: 'ab', bridgeId: 'id', name: 'Bridge', paired: false, version: 1 });
     expect(parseReply({ t: 'pair', status: 'pending', code: '123456', expires_in: 100, n: 'cd' }, key))
-      .toEqual({ t: 'pair', status: 'pending', code: '123456', expiresIn: 100, n: 'cd' });
+      .toEqual({ t: 'pair', status: 'pending', code: '123456', expiresIn: 100, challenge: null, n: 'cd' });
+    expect(parseReply({
+      t: 'pair', status: 'pending', code: '123456', expires_in: 100, n: 'cd',
+      challenge: { shade: 'door', name: 'Door', direction: 'up' },
+    }, key)).toEqual({
+      t: 'pair', status: 'pending', code: '123456', expiresIn: 100, n: 'cd',
+      challenge: { shade: 'door', name: 'Door', direction: 'up' },
+    });
+    expect(parseReply({ t: 'pair', status: 'pending', challenge: { shade: 'door', name: 'Door', direction: 'sideways' } }, key))
+      .toMatchObject({ challenge: null });
     const status = parseReply({
       t: 'status',
       writes: true,

@@ -4,7 +4,7 @@
 // React, so the flow is exercised in the test suite against the pretend
 // bridge from start to a moved shade.
 
-import type { PairingStatus, ShadeState } from '../protocol/messages';
+import type { PairingChallenge, PairingStatus, ShadeState } from '../protocol/messages';
 import type { Identity } from '../protocol/signing';
 import type { BridgeLink, BridgeTransport, DiscoveredBridge, RadioState } from '../transport/types';
 import { BridgeError, BridgeSession } from './bridgeSession';
@@ -31,6 +31,8 @@ export interface RemoteSnapshot {
   pairingCode: string | null;
   pairingExpiresAt: number | null;
   pairingOutcome: PairingStatus | null;
+  /** Which shade button the bridge asked for; null when no shade was reachable. */
+  pairingChallenge: PairingChallenge | null;
   shades: ShadeState[];
   writes: boolean;
   /** Positions this phone asked for, shown until the bridge reports arrival. */
@@ -61,6 +63,7 @@ export class RemoteController {
     pairingCode: null,
     pairingExpiresAt: null,
     pairingOutcome: null,
+    pairingChallenge: null,
     shades: [],
     writes: false,
     requested: {},
@@ -142,7 +145,7 @@ export class RemoteController {
     this.update({ phase: 'pairing', pairingOutcome: null, message: null });
     try {
       const reply = await session.pair(this.deviceName);
-      this.applyPairing(reply.status, reply.code, reply.expiresIn);
+      this.applyPairing(reply.status, reply.code, reply.expiresIn, reply.challenge);
     } catch (error) {
       this.handlePairingError(error);
     }
@@ -275,7 +278,7 @@ export class RemoteController {
       await saveKnownBridge(known);
       this.update({ knownBridge: known });
     }
-    this.update({ phase: 'ready', pairingCode: null, pairingOutcome: null, message: null });
+    this.update({ phase: 'ready', pairingCode: null, pairingChallenge: null, pairingOutcome: null, message: null });
   }
 
   private applyStatus(shades: ShadeState[], writes: boolean): void {
@@ -289,11 +292,17 @@ export class RemoteController {
     this.update({ shades, writes, requested });
   }
 
-  private applyPairing(status: PairingStatus, code: string | null, expiresIn: number | null): void {
+  private applyPairing(
+    status: PairingStatus,
+    code: string | null,
+    expiresIn: number | null,
+    challenge: PairingChallenge | null = this.snapshot.pairingChallenge,
+  ): void {
     if (status === 'pending') {
       this.update({
         phase: 'pairing',
         pairingCode: code,
+        pairingChallenge: challenge,
         pairingExpiresAt: expiresIn !== null ? this.now() + expiresIn * 1000 : this.snapshot.pairingExpiresAt,
       });
       this.schedulePairPoll();
@@ -307,7 +316,7 @@ export class RemoteController {
       });
       return;
     }
-    this.update({ phase: 'unpaired', pairingCode: null, pairingOutcome: status });
+    this.update({ phase: 'unpaired', pairingCode: null, pairingChallenge: null, pairingOutcome: status });
   }
 
   private handlePairingError(error: unknown): void {

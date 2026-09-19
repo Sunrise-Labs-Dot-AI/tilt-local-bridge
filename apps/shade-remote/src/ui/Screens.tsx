@@ -92,15 +92,32 @@ export function PairingView({ snapshot }: { snapshot: RemoteSnapshot }) {
     return () => clearInterval(timer);
   }, []);
   const remaining = snapshot.pairingExpiresAt ? Math.max(0, Math.round((snapshot.pairingExpiresAt - now) / 1000)) : null;
+  const challenge = snapshot.pairingChallenge;
   return (
     <Centered>
-      <Text style={[styles.eyebrow, { color: theme.inkMuted }]}>Pairing code</Text>
+      {challenge ? (
+        <>
+          <Text style={[styles.eyebrow, { color: theme.inkMuted }]}>To finish pairing</Text>
+          <Text style={[styles.title, { color: theme.ink }]} accessibilityRole="header">
+            Tap <Text style={{ color: theme.accent }}>{challenge.direction}</Text> on{' '}
+            <Text style={{ color: theme.accent }}>{challenge.name}</Text>
+          </Text>
+          <Text style={[styles.body, { color: theme.inkSoft }]}>
+            Press that button on the shade itself. The bridge watches for exactly that movement; any other shade or
+            direction cancels the request.
+          </Text>
+        </>
+      ) : (
+        <Text style={[styles.body, { color: theme.inkSoft }]}>
+          No shade is reachable right now, so this request can only be approved from Home Assistant.
+        </Text>
+      )}
+      <Text style={[styles.eyebrow, { color: theme.inkMuted }]}>Or approve with code</Text>
       <Text style={[styles.code, { color: theme.ink }]} accessibilityLabel={`Pairing code ${snapshot.pairingCode ?? ''}`}>
         {snapshot.pairingCode ? `${snapshot.pairingCode.slice(0, 3)} ${snapshot.pairingCode.slice(3)}` : '···'}
       </Text>
-      <Text style={[styles.body, { color: theme.inkSoft }]}>
-        In Home Assistant, check that the Phone pairing request sensor shows this code, then tap Approve phone
-        pairing. On the bridge itself, the journal shows the same code and SIGUSR1 approves it.
+      <Text style={[styles.meta, { color: theme.inkMuted }]}>
+        Home Assistant shows this code on the Phone pairing request sensor; Approve phone pairing accepts it.
       </Text>
       <View style={styles.row}>
         <ActivityIndicator color={theme.accent} />
@@ -171,7 +188,7 @@ const styles = StyleSheet.create({
   eyebrow: { fontSize: 13, textTransform: 'uppercase', letterSpacing: 1.2 },
   title: { fontSize: 26, fontWeight: '700', letterSpacing: -0.4 },
   body: { fontSize: 16, lineHeight: 23 },
-  code: { fontSize: 56, fontWeight: '700', fontVariant: ['tabular-nums'], letterSpacing: 4 },
+  code: { fontSize: 44, fontWeight: '700', fontVariant: ['tabular-nums'], letterSpacing: 3 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   button: { paddingVertical: 14, paddingHorizontal: 22, borderRadius: radius.control, alignItems: 'center', marginTop: 8 },
   buttonText: { fontSize: 16, fontWeight: '600' },

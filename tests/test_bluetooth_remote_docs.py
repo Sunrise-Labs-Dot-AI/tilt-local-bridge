@@ -29,10 +29,13 @@ class BluetoothRemoteDocsTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.normalized)
 
-    def test_both_approval_paths_are_documented(self) -> None:
+    def test_all_three_approval_paths_are_documented(self) -> None:
         self.assertIn("**Approve phone pairing** button", self.normalized)
         self.assertIn("SIGUSR1", self.guide)
         self.assertIn("one pending request at a time, for two minutes", self.normalized)
+        self.assertIn("picks one reachable shade and a direction at random", self.normalized)
+        self.assertIn("This path needs no network at all", self.normalized)
+        self.assertIn("Any other hand movement in the window denies the request", self.normalized)
 
     def test_two_gates_and_write_gate_are_explicit(self) -> None:
         self.assertIn("`bluetooth_remote.enabled` is `true`", self.normalized)

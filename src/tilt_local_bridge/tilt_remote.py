@@ -24,7 +24,7 @@ import re
 import secrets
 import stat
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +47,11 @@ MAX_CHUNK_BYTES = 244
 PAIRING_TTL_SECONDS = 120.0
 SESSION_IDLE_SECONDS = 600.0
 STATUS_PUSH_DELAY_SECONDS = 0.2
+# While a request is pending the bridge re-reads the shades this often, so the
+# button press the app asked for can approve the phone without a network.
+PAIRING_PROBE_SECONDS = 15.0
+MANUAL_MOVE_MIN_PERCENT = 5
+CHALLENGE_DIRECTIONS = ("up", "down")
 MAX_PHONE_NAME_LENGTH = 40
 MAX_PAIRED_PHONES = 16
 
@@ -480,6 +485,9 @@ class ShadeSnapshot:
     available: bool
     target_percent: int | None
     age_seconds: int | None
+    # Monotonic time of the last position the bridge itself commanded, from
+    # any source, so a movement it did not ask for can be told apart.
+    commanded_at: float | None = None
 
 
 class RemoteBridge(Protocol):
@@ -494,6 +502,21 @@ class RemoteBridge(Protocol):
     def publish_paired_phone_count(self, count: int) -> None: ...
 
 
+@dataclass(frozen=True)
+class PairingChallenge:
+    """The one physical button press that approves a request: a shade and a direction."""
+
+    shade_id: str
+    shade_name: str
+    direction: str  # "up" opens (position rises), "down" closes (position falls)
+
+    def as_message(self) -> dict[str, str]:
+        return {"shade": self.shade_id, "name": self.shade_name, "direction": self.direction}
+
+    def instruction(self) -> str:
+        return f"tap {self.direction} on {self.shade_name}"
+
+
 @dataclass
 class PendingPairing:
     public_key: str
@@ -501,6 +524,10 @@ class PendingPairing:
     code: str
     requested_at: float
     expires_at: float
+    # Positions when the request arrived; the button press is judged against these.
+    baseline: dict[str, int] = field(default_factory=dict)
+    challenge: PairingChallenge | None = None
+    last_probe_at: float = 0.0
 
 
 @dataclass
@@ -536,6 +563,7 @@ class RemoteProtocol:
         self._monotonic = monotonic_clock or time.monotonic
         self._random_bytes = random_bytes or secrets.token_bytes
         self._random_code = random_code or _random_pairing_code
+        self._random_choice: Callable[[Sequence[Any]], Any] = secrets.choice
         self._sessions: dict[str, RemoteSession] = {}
         self._pending: PendingPairing | None = None
         self._last_resolution: dict[str, str] = {}
@@ -595,6 +623,9 @@ class RemoteProtocol:
             self._bridge.publish_pairing_request(None)
             _LOGGER.info("Phone pairing request from %r expired", pending.name)
             work.extend(self._notify_pairing(pending.public_key, "expired"))
+        elif pending is not None and now - pending.last_probe_at >= PAIRING_PROBE_SECONDS:
+            pending.last_probe_at = now
+            work.append(self._probe_for_manual_move())
         for connection, session in list(self._sessions.items()):
             if now - session.last_seen > SESSION_IDLE_SECONDS:
                 self._sessions.pop(connection, None)
@@ -724,29 +755,112 @@ class RemoteProtocol:
                 "retry_in": max(1, int(pending.expires_at - now) + 1),
             }
         if pending is None:
+            baseline = self._position_baseline()
             pending = PendingPairing(
                 public_key=public_key,
                 name=clean_phone_name(request.get("name")),
                 code=self._random_code(),
                 requested_at=now,
                 expires_at=now + PAIRING_TTL_SECONDS,
+                baseline=baseline,
+                challenge=self._pick_challenge(baseline),
+                last_probe_at=now,
             )
             self._pending = pending
             self._last_resolution.pop(public_key, None)
             self._bridge.publish_pairing_request(pairing_request_text(pending))
             _LOGGER.warning(
-                "Phone %r asks to pair with code %s. Approve within %d seconds from the "
-                "Home Assistant button or by sending SIGUSR1 to this service.",
+                "Phone %r asks to pair with code %s. Approve within %d seconds by %s, "
+                "from the Home Assistant button, or by sending SIGUSR1 to this service.",
                 pending.name,
                 pending.code,
                 int(PAIRING_TTL_SECONDS),
+                pending.challenge.instruction() if pending.challenge else "no shade press (none reachable)",
             )
         return {
             "t": "pair",
             "status": "pending",
             "code": pending.code,
             "expires_in": max(0, int(pending.expires_at - now)),
+            "challenge": pending.challenge.as_message() if pending.challenge else None,
         }
+
+    def _position_baseline(self) -> dict[str, int]:
+        return {
+            shade.id: shade.position_percent
+            for shade in self._bridge.shade_snapshots()
+            if shade.position_percent is not None and shade.available
+        }
+
+    def _pick_challenge(self, baseline: dict[str, int]) -> PairingChallenge | None:
+        """Choose one reachable shade and a direction it can still move in."""
+
+        candidates = [
+            shade for shade in self._bridge.shade_snapshots()
+            if shade.id in baseline and shade.target_percent is None
+        ]
+        if not candidates:
+            return None
+        shade = self._random_choice(candidates)
+        position = baseline[shade.id]
+        if position >= 100 - MANUAL_MOVE_MIN_PERCENT:
+            direction = "down"
+        elif position <= MANUAL_MOVE_MIN_PERCENT:
+            direction = "up"
+        else:
+            direction = self._random_choice(CHALLENGE_DIRECTIONS)
+        return PairingChallenge(shade_id=shade.id, shade_name=shade.name, direction=direction)
+
+    async def _probe_for_manual_move(self) -> None:
+        """Re-read the shades and judge any hand movement against the challenge."""
+
+        try:
+            await self._bridge.refresh_all()
+        except Exception as exc:
+            _LOGGER.debug("Pairing probe read failed: %s", type(exc).__name__)
+        for work in self._judge_manual_movement():
+            await work
+
+    def _judge_manual_movement(self) -> list[Awaitable[None]]:
+        verdict = self.manual_movement_since_request()
+        if verdict is None:
+            return []
+        outcome, description = verdict
+        if outcome == "approve":
+            return self.approve_pending(f"the shade press it asked for ({description})")
+        _LOGGER.warning("Pairing denied: %s", description)
+        return self.deny_pending(description)
+
+    def manual_movement_since_request(self) -> tuple[str, str] | None:
+        """Return ("approve"|"deny", description) for a hand movement, or None.
+
+        Only the shade and direction the app asked for approve. Any other hand
+        movement during the window denies, because it is either a mistake worth
+        a retry or somebody else's hands.
+        """
+
+        pending = self._pending
+        if pending is None or pending.challenge is None:
+            return None
+        challenge = pending.challenge
+        for shade in self._bridge.shade_snapshots():
+            before = pending.baseline.get(shade.id)
+            after = shade.position_percent
+            if before is None or after is None:
+                continue
+            delta = after - before
+            if abs(delta) < MANUAL_MOVE_MIN_PERCENT:
+                continue
+            if shade.target_percent is not None:
+                continue
+            if shade.commanded_at is not None and shade.commanded_at >= pending.requested_at:
+                continue
+            direction = "up" if delta > 0 else "down"
+            description = f"{shade.name} moved {direction} from {before} to {after}"
+            if shade.id == challenge.shade_id and direction == challenge.direction:
+                return "approve", description
+            return "deny", f"{description}, but the request asked to {challenge.instruction()}"
+        return None
 
     def _pairing_status(self, public_key: str) -> str:
         if self._store.is_paired(public_key):
@@ -863,6 +977,9 @@ class RemoteProtocol:
     def notify_status_changed(self, _shade_id: str | None = None) -> None:
         """Called by the bridge whenever a shade status or availability changes."""
 
+        if self._pending is not None:
+            for work in self._judge_manual_movement():
+                self._spawn(work)
         if not any(session.pushes for session in self._sessions.values()):
             return
         if self._status_push_handle is not None:
@@ -938,7 +1055,10 @@ class RemoteProtocol:
 
 
 def pairing_request_text(pending: PendingPairing) -> str:
-    return f"{pending.name} (code {pending.code})"
+    text = f"{pending.name} (code {pending.code})"
+    if pending.challenge is not None:
+        text += f": {pending.challenge.instruction()}"
+    return text
 
 
 def _error(code: str, message: str) -> dict[str, Any]:

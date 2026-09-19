@@ -136,7 +136,10 @@ export class MockBridge {
             this.pending = { publicKey, name: String(request.name ?? 'Phone'), code: String(Math.floor(Math.random() * 1e6)).padStart(6, '0') };
             setTimeout(() => this.approve(), this.options.approveAfterMs);
           }
-          this.reply(session, { t: 'pair', status: 'pending', code: this.pending.code, expires_in: 120, n });
+          this.reply(session, {
+            t: 'pair', status: 'pending', code: this.pending.code, expires_in: 120, n,
+            challenge: { shade: 'door', name: 'Door', direction: 'down' },
+          });
         }
         return;
       }

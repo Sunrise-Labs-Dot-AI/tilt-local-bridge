@@ -26,9 +26,16 @@ export interface ShadeState {
 
 export type PairingStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'none';
 
+/** The one physical press that approves a request: a shade and a direction. */
+export interface PairingChallenge {
+  shade: string;
+  name: string;
+  direction: 'up' | 'down';
+}
+
 export type Reply =
   | { t: 'nonce'; n: string; bridgeId: string; name: string; paired: boolean; version: number }
-  | { t: 'pair'; status: PairingStatus; code: string | null; expiresIn: number | null; n: string | null }
+  | { t: 'pair'; status: PairingStatus; code: string | null; expiresIn: number | null; challenge: PairingChallenge | null; n: string | null }
   | { t: 'status'; shades: ShadeState[]; writes: boolean; n: string | null }
   | { t: 'set'; shade: string; position: number; outcome: string; n: string | null }
   | { t: 'refresh'; accepted: boolean; n: string | null }
@@ -60,6 +67,15 @@ export function parseInfo(text: string): BridgeInfo {
     throw new Error('Bridge info is incomplete.');
   }
   return { version, bridgeId, name };
+}
+
+function parseChallenge(raw: unknown): PairingChallenge | null {
+  if (!isRecord(raw)) return null;
+  const shade = str(raw.shade);
+  const name = str(raw.name);
+  const direction = str(raw.direction);
+  if (shade === null || name === null || (direction !== 'up' && direction !== 'down')) return null;
+  return { shade, name, direction };
 }
 
 function parseShade(raw: unknown): ShadeState | null {
@@ -99,7 +115,7 @@ export function parseReply(raw: unknown, publicKeyHex: string): Reply | null {
       if (status !== 'pending' && status !== 'approved' && status !== 'denied' && status !== 'expired' && status !== 'none') {
         return null;
       }
-      return { t: 'pair', status, code: str(raw.code), expiresIn: int(raw.expires_in), n };
+      return { t: 'pair', status, code: str(raw.code), expiresIn: int(raw.expires_in), challenge: parseChallenge(raw.challenge), n };
     }
     case 'status': {
       if (!Array.isArray(raw.shades)) return null;

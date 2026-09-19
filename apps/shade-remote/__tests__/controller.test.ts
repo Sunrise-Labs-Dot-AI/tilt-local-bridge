@@ -53,6 +53,7 @@ describe('RemoteController against the pretend bridge', () => {
     await controller.pair();
     const pairing = await waitFor(controller, (s) => s.phase === 'pairing' && s.pairingCode !== null);
     expect(pairing.pairingCode).toMatch(/^\d{6}$/);
+    expect(pairing.pairingChallenge).toEqual({ shade: 'door', name: 'Door', direction: 'down' });
     expect(bridge.pending?.name).toBe('Test Phone');
 
     const ready = await waitFor(controller, (s) => s.phase === 'ready');
