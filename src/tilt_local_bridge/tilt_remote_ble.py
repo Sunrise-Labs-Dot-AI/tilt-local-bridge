@@ -246,6 +246,9 @@ class RemoteConnections:
             _LOGGER.debug("Dropped remote chunk from %s: %s", connection, exc)
             return None
 
+    def is_known(self, connection: str) -> bool:
+        return connection in self._assemblers
+
     def close(self, connection: str) -> None:
         self._assemblers.pop(connection, None)
         self._mtus.pop(connection, None)
@@ -430,11 +433,15 @@ class RemoteGattServer:
         connected = body[1].get("Connected")
         value = getattr(connected, "value", connected)
         if value is False:
+            was_phone = self._connections.is_known(message.path)
             self._connections.close(message.path)
-            _LOGGER.debug("Remote connection %s closed", message.path)
-            self._schedule_readvertise("disconnect")
+            # The bridge's own shade sessions end here too. Advertising is
+            # refreshed after those as well, because the controller may have
+            # dropped it while it held the central connection, but only a
+            # phone's departure is worth a line in the journal.
+            self._schedule_readvertise("a phone disconnect" if was_phone else "a shade session", quiet=not was_phone)
 
-    def _schedule_readvertise(self, reason: str) -> None:
+    def _schedule_readvertise(self, reason: str, *, quiet: bool = False) -> None:
         """Re-register the advertisement after a phone drops off.
 
         Some controllers, the Raspberry Pi Zero 2 W's among them, do not
@@ -448,10 +455,10 @@ class RemoteGattServer:
         if self._readvertise_task is not None and not self._readvertise_task.done():
             return
         self._readvertise_task = self._loop.create_task(
-            self._readvertise(reason), name="tilt-remote-readvertise"
+            self._readvertise(reason, quiet), name="tilt-remote-readvertise"
         )
 
-    async def _readvertise(self, reason: str) -> None:
+    async def _readvertise(self, reason: str, quiet: bool = False) -> None:
         await asyncio.sleep(_READVERTISE_DELAY_SECONDS)
         if self._bus is None:
             return
@@ -478,7 +485,9 @@ class RemoteGattServer:
         except RemoteBleError as exc:
             _LOGGER.warning("Re-advertising after %s failed: %s", reason, exc)
             return
-        _LOGGER.info("Bluetooth remote re-advertised after %s", reason)
+        (_LOGGER.debug if quiet else _LOGGER.info)(
+            "Bluetooth remote re-advertised after %s", reason
+        )
 
     async def _active_advertising_instances(self) -> int | None:
         try:
