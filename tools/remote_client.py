@@ -142,6 +142,7 @@ class RemoteClient:
 
 async def find_bridge(name: str | None, timeout: float) -> Any:
     from bleak import BleakScanner
+    from bleak.exc import BleakError
 
     def matches(device: Any, advertisement: Any) -> bool:
         uuids = [u.lower() for u in (advertisement.service_uuids or [])]
@@ -151,7 +152,23 @@ async def find_bridge(name: str | None, timeout: float) -> Any:
             return False
         return True
 
-    device = await BleakScanner.find_device_by_filter(matches, timeout=timeout)
+    # On macOS the first CoreBluetooth manager in a process can report its
+    # state a moment late, which bleak surfaces as "turned off" even while the
+    # radio is on (and while the privacy prompt is still on screen). A few
+    # patient retries cover that; a genuinely disabled radio still fails.
+    last_error: Exception | None = None
+    for attempt in range(4):
+        try:
+            device = await BleakScanner.find_device_by_filter(matches, timeout=timeout)
+            break
+        except BleakError as exc:
+            last_error = exc
+            if "turned off" not in str(exc) or attempt == 3:
+                raise SystemExit(f"Bluetooth is not usable here: {exc}") from exc
+            print(f"Bluetooth not ready yet ({exc}); retrying in 3 s", file=sys.stderr)
+            await asyncio.sleep(3.0)
+    else:  # pragma: no cover - loop always breaks or raises
+        raise SystemExit(str(last_error))
     if device is None:
         raise SystemExit("No bridge advertising the remote service was found.")
     return device
