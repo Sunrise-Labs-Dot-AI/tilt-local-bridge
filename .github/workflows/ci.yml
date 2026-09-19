@@ -24,6 +24,22 @@ jobs:
       - run: python tools/check_public_tree.py
       - run: bash -n scripts/install.sh
 
+  app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/shade-remote
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/shade-remote/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:ci
+
   secrets:
     runs-on: ubuntu-latest
     env:

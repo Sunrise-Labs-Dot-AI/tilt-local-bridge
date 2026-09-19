@@ -28,6 +28,14 @@ The separate pairing executable can:
 
 It cannot move, reset, calibrate, rename, or update firmware.
 
+## Phone remote operations
+
+The optional Bluetooth phone remote adds a separate GATT service on the bridge
+itself. Its request set is status reads, one absolute position request per
+shade, a refresh, and pairing. It reaches shades only through the same
+allowlisted runtime operations above and is described in
+[BLUETOOTH_REMOTE.md](BLUETOOTH_REMOTE.md).
+
 ## Deliberate omissions
 
 The project does not expose arbitrary frame writes or undocumented commands.

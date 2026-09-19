@@ -134,6 +134,35 @@ Do not compensate in automations. Open an issue with the shade model, firmware,
 and redacted status output. Different firmware may encode raw positions
 differently.
 
+## The phone cannot find the bridge
+
+The remote advertises only while both of its gates are set. Check the journal
+for `Bluetooth remote is advertising as` and confirm the installed unit
+carries `--allow-bluetooth-remote`:
+
+```bash
+systemctl show --property=ExecStart --value tilt-local-bridge.service
+journalctl -u tilt-local-bridge.service -n 50 --no-pager
+```
+
+If `RegisterApplication` or `RegisterAdvertisement` failed, the service user
+cannot reach BlueZ over D-Bus. It must be in the `bluetooth` group, which the
+installer arranges, and `bluetoothctl show` must report a powered controller.
+
+If the bridge advertises but the phone does not list it, move within a room of
+the Raspberry Pi, confirm Bluetooth is on and the app has Bluetooth permission,
+and close any other app holding a connection to the bridge. Phones keep one
+connection to a peripheral at a time.
+
+A pairing request that never resolves has usually expired. Look at the **Phone
+pairing request** sensor, or the journal, and ask again from the phone. Only one
+request is held at a time, so a stale request from another phone blocks new
+ones until it expires.
+
+If the phone shows the shades but a position is refused, the bridge is running
+read-only. The remote respects the same position-write gates Home Assistant
+does; see [enable position writes](HOME_ASSISTANT.md#enable-position-writes).
+
 ## Disable everything quickly
 
 ```bash

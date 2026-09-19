@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "Shade Remote",
+    "slug": "tilt-shade-remote",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "tiltshaderemote",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "ios": {
+      "bundleIdentifier": "ai.sunriselabs.tiltshaderemote",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "ai.sunriselabs.tiltshaderemote",
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT"
+      ]
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "neverForLocation": true,
+          "bluetoothAlwaysPermission": "Shade Remote uses Bluetooth to reach your Tilt Local Bridge directly, so your shades still answer when Wi-Fi is down."
+        }
+      ]
+    ],
+    "icon": "./assets/icon.png",
+    "splash": {
+      "backgroundColor": "#2B5F86",
+      "image": "./assets/icon.png",
+      "resizeMode": "contain"
+    }
+  }
+}

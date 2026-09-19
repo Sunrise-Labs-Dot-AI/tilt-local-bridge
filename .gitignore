@@ -19,3 +19,13 @@ bridge.json
 mqtt.username
 mqtt.password
 tilt-store*.json
+
+# Phone app build products and generated native projects.
+apps/*/node_modules/
+apps/*/.expo/
+apps/*/ios/
+apps/*/android/
+apps/*/dist/
+*.ipa
+*.apk
+*.aab

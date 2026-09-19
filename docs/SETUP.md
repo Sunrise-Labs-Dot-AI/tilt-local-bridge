@@ -138,7 +138,9 @@ systemctl status tilt-local-bridge.service
 ```
 
 Home Assistant should discover one device per shade. Once reads are stable,
-continue to [Home Assistant position control](HOME_ASSISTANT.md).
+continue to [Home Assistant position control](HOME_ASSISTANT.md). The optional
+[Bluetooth phone remote](BLUETOOTH_REMOTE.md) can be enabled afterwards with
+its own installer flag.
 
 ## Updating
 

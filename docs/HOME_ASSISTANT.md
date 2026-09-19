@@ -56,6 +56,15 @@ five buttons to open, close, a favorite position, and a step up or down. See
 [physical remotes](REMOTES.md) for the wiring, the pairing steps, and how to
 adapt the pattern to a non-Lutron remote.
 
+## Approve a phone for the Bluetooth remote
+
+When the optional [Bluetooth phone remote](BLUETOOTH_REMOTE.md) is enabled,
+discovery adds a **Tilt Local Bridge** device with a **Phone pairing request**
+sensor, an **Approve phone pairing** button, and a **Paired phones** count. A
+phone asking to pair shows its name and a six-digit code in the sensor. Compare
+the code with the phone, then press the button. Requests expire after two
+minutes, and the bridge holds one at a time.
+
 ## Enable position writes
 
 There are two gates. Both must be enabled.

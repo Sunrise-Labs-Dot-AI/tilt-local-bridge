@@ -16,6 +16,7 @@ from .tilt_bridge_config import (
     ShadeAccessDisabled,
     TiltBridgeConfig,
     TiltBridgeConfigError,
+    authorize_bluetooth_remote,
     authorize_shade_access,
     load_config,
     load_pairing_key,
@@ -28,6 +29,13 @@ from .tilt_mqtt import (
 )
 from .tilt_key_import import import_pairing_keys
 from .tilt_protocol import TiltProtocolError
+from .tilt_remote import (
+    RemotePhoneStore,
+    RemoteProtocol,
+    RemoteProtocolError,
+    check_state_location,
+)
+from .tilt_remote_ble import RemoteBleError, RemoteGattServer
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -184,6 +192,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Require configured position-write access in addition to reads.",
     )
+    runtime_check.add_argument(
+        "--expect-bluetooth-remote",
+        action="store_true",
+        help="Require the Bluetooth phone remote to be enabled and its state location usable.",
+    )
 
     probe = subparsers.add_parser(
         "probe-status",
@@ -210,6 +223,24 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="Run the MQTT bridge.")
     serve.add_argument("--allow-shade-reads", action="store_true")
     serve.add_argument("--allow-position-writes", action="store_true")
+    serve.add_argument(
+        "--allow-bluetooth-remote",
+        action="store_true",
+        help="Second gate, with bluetooth_remote.enabled, for the phone remote.",
+    )
+
+    phones = subparsers.add_parser(
+        "remote-phones",
+        help="List or remove phones paired with the Bluetooth remote.",
+    )
+    phone_actions = phones.add_subparsers(dest="phone_action", required=True)
+    phone_actions.add_parser("list", help="List paired phones without secrets.")
+    remove = phone_actions.add_parser("remove", help="Remove phones by key prefix.")
+    remove.add_argument(
+        "--key-prefix",
+        required=True,
+        help="At least eight hex digits of the phone key shown by list.",
+    )
     return parser
 
 
@@ -242,6 +273,9 @@ async def _run_probe(config: TiltBridgeConfig, args: argparse.Namespace) -> int:
 def _run_runtime_check(config: TiltBridgeConfig, args: argparse.Namespace) -> int:
     if args.expect_position_writes and not args.expect_shade_reads:
         raise ShadeAccessDisabled("Position writes require the read expectation flag.")
+    expect_remote = bool(getattr(args, "expect_bluetooth_remote", False))
+    if expect_remote and not args.expect_shade_reads:
+        raise ShadeAccessDisabled("The Bluetooth remote requires the read expectation flag.")
     load_secret(config.mqtt.username_file, label="MQTT username")
     load_secret(config.mqtt.password_file, label="MQTT password")
     key_count = 0
@@ -254,31 +288,85 @@ def _run_runtime_check(config: TiltBridgeConfig, args: argparse.Namespace) -> in
         for shade in config.shades:
             load_pairing_key(shade.pairing_key_file)
             key_count += 1
-    print(
-        json.dumps(
-            {
-                "ready": True,
-                "mqtt_credentials_valid": True,
-                "pairing_key_count": key_count,
-                "expected_read_access": args.expect_shade_reads,
-                "expected_position_write_access": args.expect_position_writes,
-            },
-            sort_keys=True,
-        )
-    )
+    report: dict[str, Any] = {
+        "ready": True,
+        "mqtt_credentials_valid": True,
+        "pairing_key_count": key_count,
+        "expected_read_access": args.expect_shade_reads,
+        "expected_position_write_access": args.expect_position_writes,
+        "expected_bluetooth_remote": expect_remote,
+    }
+    if expect_remote:
+        remote = authorize_bluetooth_remote(config, request_remote=True)
+        report.update(check_state_location(remote.state_file))
+    print(json.dumps(report, sort_keys=True))
     return 0
+
+
+def _run_remote_phones(config: TiltBridgeConfig, args: argparse.Namespace) -> int:
+    remote = config.bluetooth_remote
+    if remote is None:
+        raise TiltBridgeConfigError("bluetooth_remote is not configured.")
+    store = RemotePhoneStore(remote.state_file)
+    if args.phone_action == "list":
+        if not remote.state_file.exists():
+            print(json.dumps({"bridge_id": None, "phones": []}, sort_keys=True))
+            return 0
+        print(
+            json.dumps(
+                {
+                    "bridge_id": store.bridge_id,
+                    "phones": [
+                        {
+                            "name": phone.name,
+                            "key_prefix": phone.public_key[:8],
+                            "paired_at": phone.paired_at,
+                        }
+                        for phone in store.phones()
+                    ],
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.phone_action == "remove":
+        if not remote.state_file.exists():
+            raise TiltBridgeConfigError("No phones have been paired yet.")
+        removed = store.remove(args.key_prefix)
+        print(
+            json.dumps(
+                {
+                    "removed": [
+                        {"name": phone.name, "key_prefix": phone.public_key[:8]}
+                        for phone in removed
+                    ]
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+    raise TiltBridgeConfigError("Unknown remote-phones action.")
 
 
 async def _run_service(config: TiltBridgeConfig, args: argparse.Namespace) -> int:
     if args.allow_position_writes and not args.allow_shade_reads:
         raise ShadeAccessDisabled("Position writes require the read launch flag.")
+    allow_remote = bool(getattr(args, "allow_bluetooth_remote", False))
+    if allow_remote and not args.allow_shade_reads:
+        raise ShadeAccessDisabled("The Bluetooth remote requires the read launch flag.")
+    # Every gate is checked before any secret is read.
+    remote_config = (
+        authorize_bluetooth_remote(config, request_remote=True) if allow_remote else None
+    )
     shade_clients: dict[str, TiltShadeClient] = {}
+    position_writes_enabled = False
     if args.allow_shade_reads:
         permit = authorize_shade_access(
             config,
             request_reads=True,
             request_position_writes=args.allow_position_writes,
         )
+        position_writes_enabled = permit.can_write_position
         for shade in config.shades:
             shade_clients[shade.id] = TiltShadeClient(
                 shade,
@@ -287,7 +375,27 @@ async def _run_service(config: TiltBridgeConfig, args: argparse.Namespace) -> in
             )
 
     connection = PahoMqttConnection(config)
-    bridge = TiltMqttBridge(config, connection, shade_clients)
+    bridge = TiltMqttBridge(
+        config, connection, shade_clients, pairing_surface=remote_config is not None
+    )
+    remote_protocol: RemoteProtocol | None = None
+    remote_server: RemoteGattServer | None = None
+    if remote_config is not None:
+        store = RemotePhoneStore(remote_config.state_file)
+        store.load()
+        remote_protocol = RemoteProtocol(
+            store,
+            bridge,
+            name=remote_config.name,
+            position_writes_enabled=position_writes_enabled,
+        )
+        bridge.set_bridge_command_handler(remote_protocol.handle_bridge_command)
+        bridge.add_status_listener(remote_protocol.notify_status_changed)
+        remote_server = RemoteGattServer(
+            remote_protocol,
+            adapter=remote_config.adapter,
+            local_name=remote_config.name,
+        )
     await connection.connect(bridge.handle_message)
     connection.set_reconnect_handler(bridge.handle_reconnect)
     stop = asyncio.Event()
@@ -297,10 +405,25 @@ async def _run_service(config: TiltBridgeConfig, args: argparse.Namespace) -> in
             loop.add_signal_handler(signal_number, stop.set)
         except NotImplementedError:  # pragma: no cover - POSIX deployment
             pass
+    if remote_protocol is not None:
+        protocol = remote_protocol
+
+        def approve_from_operator() -> None:
+            for work in protocol.approve_pending("SIGUSR1"):
+                asyncio.ensure_future(work)
+
+        try:
+            loop.add_signal_handler(signal.SIGUSR1, approve_from_operator)
+        except NotImplementedError:  # pragma: no cover - POSIX deployment
+            pass
     try:
         await bridge.start()
+        if remote_server is not None:
+            await remote_server.start()
         await stop.wait()
     finally:
+        if remote_server is not None:
+            await remote_server.stop()
         await bridge.stop()
         connection.close()
     return 0
@@ -343,6 +466,8 @@ async def _async_main(args: argparse.Namespace) -> int:
         return 0
     if args.command == "serve":
         return await _run_service(config, args)
+    if args.command == "remote-phones":
+        return _run_remote_phones(config, args)
     raise TiltBridgeConfigError("Unknown Tilt bridge command.")
 
 
@@ -355,7 +480,13 @@ def main() -> int:
     )
     try:
         return asyncio.run(_async_main(args))
-    except (TiltBridgeConfigError, TiltBleError, TiltProtocolError) as exc:
+    except (
+        TiltBridgeConfigError,
+        TiltBleError,
+        TiltProtocolError,
+        RemoteProtocolError,
+        RemoteBleError,
+    ) as exc:
         _LOGGER.error("Tilt bridge stopped: %s", exc)
         return 2
 

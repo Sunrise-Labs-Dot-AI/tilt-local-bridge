@@ -27,5 +27,10 @@
     "end": "06:00",
     "poll_interval_seconds": 7200
   },
-  "command_cooldown_seconds": 5
+  "command_cooldown_seconds": 5,
+  "bluetooth_remote": {
+    "enabled": false,
+    "name": "Tilt Local Bridge",
+    "state_file": "/var/lib/tilt-local-bridge/remote.json"
+  }
 }
