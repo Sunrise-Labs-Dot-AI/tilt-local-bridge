@@ -460,6 +460,42 @@ class CliTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(report["state_file_present"])
 
 
+class RemoteStartFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_remote_start_failure_keeps_the_bridge_running(self) -> None:
+        from tilt_local_bridge.tilt_bridge import _start_remote_or_continue
+        from tilt_local_bridge.tilt_remote_ble import RemoteBleError
+
+        class FailingServer:
+            def __init__(self) -> None:
+                self.stopped = False
+
+            async def start(self) -> None:
+                raise RemoteBleError("RegisterApplication failed: org.bluez.Error.Failed")
+
+            async def stop(self) -> None:
+                self.stopped = True
+
+        server = FailingServer()
+        with self.assertLogs("tilt_local_bridge.tilt_bridge", level="ERROR") as logs:
+            result = await _start_remote_or_continue(server)  # type: ignore[arg-type]
+        self.assertIsNone(result)
+        self.assertTrue(server.stopped)
+        self.assertIn("continuing without it", logs.output[0])
+
+    async def test_remote_start_success_returns_the_server(self) -> None:
+        from tilt_local_bridge.tilt_bridge import _start_remote_or_continue
+
+        class Server:
+            async def start(self) -> None:
+                return None
+
+            async def stop(self) -> None:
+                raise AssertionError("must not stop a healthy server")
+
+        server = Server()
+        self.assertIs(await _start_remote_or_continue(server), server)  # type: ignore[arg-type]
+
+
 class InstallerTests(unittest.TestCase):
     def test_installer_has_a_separate_remote_gate_and_state_directory(self) -> None:
         installer = ROOT / "scripts" / "install.sh"

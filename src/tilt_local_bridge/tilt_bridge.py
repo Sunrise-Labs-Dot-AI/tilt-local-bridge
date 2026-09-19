@@ -419,7 +419,7 @@ async def _run_service(config: TiltBridgeConfig, args: argparse.Namespace) -> in
     try:
         await bridge.start()
         if remote_server is not None:
-            await remote_server.start()
+            remote_server = await _start_remote_or_continue(remote_server)
         await stop.wait()
     finally:
         if remote_server is not None:
@@ -427,6 +427,30 @@ async def _run_service(config: TiltBridgeConfig, args: argparse.Namespace) -> in
         await bridge.stop()
         connection.close()
     return 0
+
+
+async def _start_remote_or_continue(
+    remote_server: RemoteGattServer,
+) -> RemoteGattServer | None:
+    """Publish the phone remote, or log and carry on serving Home Assistant.
+
+    A bridge whose adapter refuses a GATT registration still has every shade
+    and its MQTT job to do. Failing the whole service here would take the
+    shades offline for the sake of the optional path.
+    """
+
+    try:
+        await remote_server.start()
+    except (RemoteBleError, RemoteProtocolError, OSError) as exc:
+        _LOGGER.error(
+            "Bluetooth remote could not start; continuing without it: %s", exc
+        )
+        try:
+            await remote_server.stop()
+        except Exception as cleanup_error:
+            _LOGGER.debug("Remote cleanup after failed start: %s", cleanup_error)
+        return None
+    return remote_server
 
 
 async def _async_main(args: argparse.Namespace) -> int:
