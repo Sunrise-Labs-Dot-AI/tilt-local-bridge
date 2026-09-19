@@ -36,6 +36,8 @@ SERVICE_PATH = APPLICATION_PATH + "/service0"
 ADVERTISEMENT_PATH = APPLICATION_PATH + "/advertisement0"
 _TICK_SECONDS = 5.0
 _NOTIFY_GAP_SECONDS = 0.005
+_READVERTISE_DELAY_SECONDS = 1.0
+_ADVERTISING_CHECK_TICKS = 12
 
 
 class RemoteBleError(RuntimeError):
@@ -274,6 +276,8 @@ class RemoteGattServer:
         self._registered_advertisement = False
         self._notify_lock = asyncio.Lock()
         self._inbound: set[asyncio.Task[None]] = set()
+        self._readvertise_task: asyncio.Task[None] | None = None
+        self._ticks = 0
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -334,6 +338,13 @@ class RemoteGattServer:
             except asyncio.CancelledError:
                 pass
             self._tick_task = None
+        if self._readvertise_task is not None:
+            self._readvertise_task.cancel()
+            try:
+                await self._readvertise_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._readvertise_task = None
         for task in list(self._inbound):
             task.cancel()
         await self._protocol.close()
@@ -421,6 +432,70 @@ class RemoteGattServer:
         if value is False:
             self._connections.close(message.path)
             _LOGGER.debug("Remote connection %s closed", message.path)
+            self._schedule_readvertise("disconnect")
+
+    def _schedule_readvertise(self, reason: str) -> None:
+        """Re-register the advertisement after a phone drops off.
+
+        Some controllers, the Raspberry Pi Zero 2 W's among them, do not
+        resume advertising on their own once a central disconnects, even
+        though BlueZ still counts the instance as active. Registering it again
+        forces the enable through.
+        """
+
+        if self._loop is None or self._bus is None or not self._registered_advertisement:
+            return
+        if self._readvertise_task is not None and not self._readvertise_task.done():
+            return
+        self._readvertise_task = self._loop.create_task(
+            self._readvertise(reason), name="tilt-remote-readvertise"
+        )
+
+    async def _readvertise(self, reason: str) -> None:
+        await asyncio.sleep(_READVERTISE_DELAY_SECONDS)
+        if self._bus is None:
+            return
+        try:
+            await self._call_bluez(
+                BLUEZ_BUS_NAME,
+                self._adapter_path,
+                "org.bluez.LEAdvertisingManager1",
+                "UnregisterAdvertisement",
+                "o",
+                [ADVERTISEMENT_PATH],
+            )
+        except RemoteBleError as exc:
+            _LOGGER.debug("Unregister before re-advertising: %s", exc)
+        try:
+            await self._call_bluez(
+                BLUEZ_BUS_NAME,
+                self._adapter_path,
+                "org.bluez.LEAdvertisingManager1",
+                "RegisterAdvertisement",
+                "oa{sv}",
+                [ADVERTISEMENT_PATH, {}],
+            )
+        except RemoteBleError as exc:
+            _LOGGER.warning("Re-advertising after %s failed: %s", reason, exc)
+            return
+        _LOGGER.info("Bluetooth remote re-advertised after %s", reason)
+
+    async def _active_advertising_instances(self) -> int | None:
+        try:
+            body = await self._call_bluez(
+                BLUEZ_BUS_NAME,
+                self._adapter_path,
+                "org.freedesktop.DBus.Properties",
+                "Get",
+                "ss",
+                ["org.bluez.LEAdvertisingManager1", "ActiveInstances"],
+            )
+        except RemoteBleError:
+            return None
+        if not body:
+            return None
+        value = getattr(body[0], "value", body[0])
+        return value if isinstance(value, int) else None
 
     async def _tick_loop(self) -> None:
         while True:
@@ -430,6 +505,12 @@ class RemoteGattServer:
                     await work
                 except Exception as exc:
                     _LOGGER.warning("Remote tick work failed: %s", type(exc).__name__)
+            self._ticks += 1
+            if self._ticks % _ADVERTISING_CHECK_TICKS == 0:
+                active = await self._active_advertising_instances()
+                if active == 0:
+                    _LOGGER.warning("BlueZ reports no active advertisement; re-advertising")
+                    self._schedule_readvertise("an idle check")
 
     async def _call_bluez(
         self,

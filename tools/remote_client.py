@@ -186,9 +186,35 @@ async def find_bridge(name: str | None, timeout: float) -> Any:
     return device
 
 
+async def scan_all(timeout: float) -> int:
+    """Print every advertiser seen, marking the ones that carry the remote service."""
+
+    from bleak import BleakScanner
+
+    found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    rows = []
+    for device, advertisement in found.values():
+        uuids = [u.lower() for u in (advertisement.service_uuids or [])]
+        rows.append(
+            {
+                "address": device.address[-8:],
+                "name": advertisement.local_name or device.name,
+                "rssi": advertisement.rssi,
+                "remote": REMOTE_SERVICE_UUID in uuids,
+            }
+        )
+    rows.sort(key=lambda row: (not row["remote"], -(row["rssi"] or -999)))
+    for row in rows:
+        print(json.dumps(row, sort_keys=True))
+    print(json.dumps({"seen": len(rows), "bridges": sum(1 for row in rows if row["remote"])}))
+    return 0
+
+
 async def run(args: argparse.Namespace) -> int:
     from bleak import BleakClient
 
+    if args.command == "scan":
+        return await scan_all(args.scan_timeout)
     seed = load_or_create_seed(args.key_file)
     device = await find_bridge(args.name, args.scan_timeout)
     async with BleakClient(device, timeout=15.0) as client:
@@ -236,6 +262,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scan-timeout", type=float, default=15.0)
     parser.add_argument("--verbose", action="store_true")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("scan", help="List nearby advertisers and which carry the remote service.")
     commands.add_parser("info", help="Read the unauthenticated info characteristic.")
     pair = commands.add_parser("pair", help="Ask to pair and wait for approval.")
     pair.add_argument("--device-name", default=f"{socket.gethostname()} (laptop)")

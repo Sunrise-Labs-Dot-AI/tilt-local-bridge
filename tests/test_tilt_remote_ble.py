@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from dbus_fast import DBusError, MessageType, Variant
 
@@ -181,10 +182,14 @@ class FakeBus:
     def add_message_handler(self, handler: Any) -> None:
         self.handlers.append(handler)
 
+    active_instances = 1
+
     async def call(self, message: Any) -> FakeReply:
         self.calls.append((message.path, message.interface, message.member, message.body))
         if message.member == self.fail_member:
             return FakeReply(MessageType.ERROR, ["boom"], "org.bluez.Error.Failed")
+        if message.member == "Get":
+            return FakeReply(MessageType.METHOD_RETURN, [Variant("y", self.active_instances)])
         return FakeReply(MessageType.METHOD_RETURN)
 
     def disconnect(self) -> None:
@@ -299,6 +304,35 @@ class GattServerTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertNotIn(device, self.protocol.sessions)
             bus.handlers[0](FakeSignal("/org/bluez/hci0", ["org.bluez.Adapter1", {}, []]))
+            with patch("tilt_local_bridge.tilt_remote_ble._READVERTISE_DELAY_SECONDS", 0):
+                bus.handlers[0](
+                    FakeSignal(device, ["org.bluez.Device1", {"Connected": Variant("b", False)}, []])
+                )
+                await asyncio.sleep(0.05)
+            members = [member for _p, _i, member, _b in bus.calls]
+            self.assertEqual(members[-2:], ["UnregisterAdvertisement", "RegisterAdvertisement"])
+        finally:
+            await server.stop()
+
+    async def test_idle_check_re_advertises_when_bluez_reports_none(self) -> None:
+        bus = FakeBus()
+        bus.active_instances = 0
+
+        async def factory() -> FakeBus:
+            return bus
+
+        server = RemoteGattServer(self.protocol, local_name="Bridge", bus_factory=factory)
+        await server.start()
+        try:
+            with (
+                patch("tilt_local_bridge.tilt_remote_ble._TICK_SECONDS", 0.001),
+                patch("tilt_local_bridge.tilt_remote_ble._ADVERTISING_CHECK_TICKS", 1),
+                patch("tilt_local_bridge.tilt_remote_ble._READVERTISE_DELAY_SECONDS", 0),
+            ):
+                await asyncio.sleep(0.1)
+            members = [member for _p, _i, member, _b in bus.calls]
+            self.assertIn("Get", members)
+            self.assertGreaterEqual(members.count("RegisterAdvertisement"), 2)
         finally:
             await server.stop()
 
