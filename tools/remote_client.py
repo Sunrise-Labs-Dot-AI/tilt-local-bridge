@@ -144,11 +144,16 @@ async def find_bridge(name: str | None, timeout: float) -> Any:
     from bleak import BleakScanner
     from bleak.exc import BleakError
 
+    seen_names: dict[str, str] = {}
+
     def matches(device: Any, advertisement: Any) -> bool:
         uuids = [u.lower() for u in (advertisement.service_uuids or [])]
         if REMOTE_SERVICE_UUID not in uuids:
             return False
-        if name and (advertisement.local_name or device.name) != name:
+        advertised = advertisement.local_name or device.name
+        if advertised:
+            seen_names[device.address] = advertised
+        if name and advertised != name:
             return False
         return True
 
@@ -171,6 +176,13 @@ async def find_bridge(name: str | None, timeout: float) -> Any:
         raise SystemExit(str(last_error))
     if device is None:
         raise SystemExit("No bridge advertising the remote service was found.")
+    # macOS often leaves device.name empty even when the advertisement carried
+    # a name; keep what the scan actually showed for the connection banner.
+    if not device.name and device.address in seen_names:
+        try:
+            device.name = seen_names[device.address]
+        except AttributeError:
+            pass
     return device
 
 
