@@ -141,7 +141,9 @@ class TiltBridgeConfigFlow(ConfigFlow, domain=DOMAIN):
             outcome = "error"
         if outcome == "approved":
             return self._async_finish()
-        if outcome == "pending" and not first_visit:
+        if outcome == "pending":
+            # The bridge checked and the press has not landed yet. A round that
+            # only just asked reports "requested" and shows the instruction plain.
             errors["base"] = "still_pending"
         elif outcome in ("denied", "expired"):
             errors["base"] = outcome
@@ -167,7 +169,7 @@ class TiltBridgeConfigFlow(ConfigFlow, domain=DOMAIN):
             return "approved"
         if self._pending is None or first_visit:
             self._pending = await session.pair(self._device_name())
-            return self._pending.status if self._pending.status != "pending" else "pending"
+            return self._pending.status if self._pending.status != "pending" else "requested"
         reply = await session.pair_status()
         if reply.status == "approved":
             return "approved"

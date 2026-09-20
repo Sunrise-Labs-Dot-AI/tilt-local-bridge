@@ -125,3 +125,32 @@ async def test_unreachable_bridge_shows_cannot_connect(hass: HomeAssistant, fake
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM and result["step_id"] == "pair"
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_retry_after_cannot_connect_shows_the_instruction_plain(
+    hass: HomeAssistant, fake_bridge: FakeBridge, wired_flow: None
+) -> None:
+    """A submit that only just asked the bridge must not say "not approved yet"."""
+
+    fake_bridge.unreachable = True
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_BLUETOOTH}, data=_discovery()
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["errors"] == {"base": "cannot_connect"}
+
+    fake_bridge.unreachable = False
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "pair"
+    assert not result["errors"]
+    assert result["description_placeholders"]["direction"] == "down"
+    assert result["description_placeholders"]["code"] == "482913"
+    assert fake_bridge.pending is not None
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["errors"] == {"base": "still_pending"}
+
+    fake_bridge.approve_on_status = True
+    with patch("custom_components.tilt_bridge.async_setup_entry", return_value=True):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY

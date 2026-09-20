@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from custom_components.tilt_bridge.client import (
+    _negotiated_mtu,
     TiltBridgeClient,
     TiltBridgeError,
     TiltBridgeNotPaired,
@@ -68,3 +71,24 @@ async def test_out_of_range_and_refusals(identity: Identity, fake_bridge: FakeBr
     absent = TiltBridgeClient(identity, name="x", ble_device_provider=lambda: None, client_factory=client_factory_for(fake_bridge))
     with pytest.raises(TiltBridgeUnavailable):
         await absent.run(lambda session: session.status())
+
+
+class _BlueZLikeClient:
+    """Mimics bleak on BlueZ: the MTU property warns and answers 23 until acquired."""
+
+    @property
+    def mtu_size(self) -> int:
+        warnings.warn("Using default MTU value. Call _acquire_mtu() first.")
+        return 23
+
+
+class _KnownMtuClient:
+    mtu_size = 247
+
+
+def test_unknown_mtu_is_treated_quietly_as_the_smallest() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert _negotiated_mtu(_BlueZLikeClient()) is None
+        assert _negotiated_mtu(_KnownMtuClient()) == 247
+        assert _negotiated_mtu(object()) is None
