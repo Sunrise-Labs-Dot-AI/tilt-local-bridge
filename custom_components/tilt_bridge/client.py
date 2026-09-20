@@ -19,8 +19,6 @@ from bleak.backends.device import BLEDevice
 from bleak.exc import BleakCharacteristicNotFoundError, BleakError
 from bleak_retry_connector import (
     BleakClientWithServiceCache,
-    BleakConnectionError,
-    BleakNotFoundError,
     clear_cache,
     establish_connection,
 )
@@ -306,7 +304,10 @@ class TiltBridgeClient:
                     client = await establish_connection(
                         BleakClientWithServiceCache, device, self._name, max_attempts=3
                     )
-            except (BleakNotFoundError, BleakConnectionError, TimeoutError) as exc:
+            except (BleakError, TimeoutError, OSError) as exc:
+                # Not found, connection refused, out of connection slots, and
+                # the rest of the retry connector's family all mean the same
+                # thing here: not reachable right now.
                 raise TiltBridgeUnavailable(f"Could not connect to the bridge: {exc}") from exc
             session = TiltBridgeSession(client, self._identity, name=self._name)
             try:

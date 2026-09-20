@@ -22,6 +22,9 @@ signed-request security described there.
 - A battery sensor per shade.
 - Polling every minute from the bridge's cached status, every fifteen seconds
   while a shade is on its way somewhere, and a fast read after every command.
+  A missed poll keeps the last status on show for up to ten minutes, so a
+  marginal link does not flip the shades unavailable between polls; commands
+  open a connection of their own regardless.
 
 If you also keep the MQTT entities, Home Assistant will show each shade twice.
 Pick one path per home: keep MQTT when the network is dependable, or remove the
@@ -83,6 +86,9 @@ does not revoke it on the bridge; `remote-phones remove` does that.
 - **Not paired** after it once worked: the bridge forgot this Home Assistant,
   usually after `remote-phones remove` or a new state file. The integration
   asks to reauthenticate; that is the same button-press ceremony.
+- **Shades go unavailable now and then**: every poll for ten minutes failed to
+  connect. That is a range problem, not a pairing one; see range above. A
+  single missed poll never shows.
 - **Movement refused**: the bridge is running read-only. The remote respects
   the same position-write gates as MQTT; see
   [enable position writes](HOME_ASSISTANT.md#enable-position-writes).

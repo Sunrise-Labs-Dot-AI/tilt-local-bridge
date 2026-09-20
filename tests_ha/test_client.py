@@ -133,3 +133,13 @@ async def test_stale_services_are_cleared_by_address_when_the_client_has_one(
     cleared.assert_awaited_once_with("AA:BB:CC:DD:EE:FF")
     # The client method is the fallback only; by address it is not touched.
     assert fake_bridge.cache_cleared == 0
+
+
+async def test_out_of_connection_slots_is_reported_unavailable(identity: Identity) -> None:
+    from bleak_retry_connector import BleakOutOfConnectionSlotsError
+
+    client = TiltBridgeClient(identity, name="Office Bridge", ble_device_provider=lambda: object())
+    failing = AsyncMock(side_effect=BleakOutOfConnectionSlotsError("no backend can reach the bridge"))
+    with patch("custom_components.tilt_bridge.client.establish_connection", new=failing):
+        with pytest.raises(TiltBridgeUnavailable):
+            await client.run(lambda session: session.status())
