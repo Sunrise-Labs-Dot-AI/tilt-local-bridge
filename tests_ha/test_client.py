@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -111,3 +112,24 @@ async def test_stale_cached_services_are_cleared_and_reported_unavailable(
     status = await client.run(lambda session: session.status())
     assert status.shade("door").position == 100
     assert fake_bridge.connections == 2
+
+
+async def test_stale_services_are_cleared_by_address_when_the_client_has_one(
+    identity: Identity, fake_bridge: FakeBridge
+) -> None:
+    fake_bridge.paired.add(identity.public_key_hex)
+    fake_bridge.stale_services = True
+    base_factory = client_factory_for(fake_bridge)
+
+    async def factory(device):
+        client = await base_factory(device)
+        client.address = "AA:BB:CC:DD:EE:FF"
+        return client
+
+    client = TiltBridgeClient(identity, name="Office Bridge", ble_device_provider=lambda: object(), client_factory=factory)
+    with patch("custom_components.tilt_bridge.client.clear_cache", new=AsyncMock(return_value=True)) as cleared:
+        with pytest.raises(TiltBridgeStaleServices):
+            await client.run(lambda session: session.status())
+    cleared.assert_awaited_once_with("AA:BB:CC:DD:EE:FF")
+    # The client method is the fallback only; by address it is not touched.
+    assert fake_bridge.cache_cleared == 0

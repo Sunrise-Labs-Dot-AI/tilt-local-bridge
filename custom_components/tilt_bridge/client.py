@@ -21,6 +21,7 @@ from bleak_retry_connector import (
     BleakClientWithServiceCache,
     BleakConnectionError,
     BleakNotFoundError,
+    clear_cache,
     establish_connection,
 )
 
@@ -97,15 +98,24 @@ class TiltBridgeStaleServices(TiltBridgeUnavailable):
 
 
 async def _forget_cached_services(client: Any) -> None:
-    """Drop BlueZ's cached services for the bridge so the next connection rediscovers them."""
+    """Drop BlueZ's cached services for the bridge so the next connection rediscovers them.
 
-    clear = getattr(client, "clear_cache", None)
-    if clear is None:
-        return
+    The retry connector clears by address (it drops its cache and asks BlueZ to
+    forget the device); the client method of the same name is a no-op on
+    current bleak, so it is only the fallback for clients without an address.
+    """
+
+    address = getattr(client, "address", None)
     try:
-        await clear()
+        if isinstance(address, str) and address:
+            cleared = await clear_cache(address)
+        else:
+            clear = getattr(client, "clear_cache", None)
+            cleared = bool(await clear()) if clear is not None else False
     except Exception:  # noqa: BLE001 - the next connection will rediscover anyway
         _LOGGER.debug("Could not clear the cached services for the bridge", exc_info=True)
+        return
+    _LOGGER.debug("Cleared the cached services for the bridge: %s", cleared)
 
 
 def _services_are_stale(client: Any) -> bool:
