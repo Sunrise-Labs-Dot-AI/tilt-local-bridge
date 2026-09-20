@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -44,6 +45,24 @@ from .protocol import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
+
+def _negotiated_mtu(client: Any) -> int | None:
+    """The ATT MTU bleak knows for this link, or None to use the smallest chunks.
+
+    BlueZ only learns the MTU through a private bleak call, and reading the
+    property before that warns and answers 23. Treat that as unknown quietly.
+    """
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            mtu = getattr(client, "mtu_size", None)
+        except Exception:  # noqa: BLE001 - a backend without an MTU is fine
+            return None
+    if not isinstance(mtu, int) or mtu <= 23:
+        return None
+    return mtu
 
 class TiltBridgeError(Exception):
     """A refusal or failure from the bridge, with the bridge's error code."""
@@ -188,7 +207,7 @@ class TiltBridgeSession:
         while not self._inbox.empty():
             self._inbox.get_nowait()
         payload = canonical_json(message)
-        chunk_size = chunk_size_for_mtu(getattr(self._client, "mtu_size", None))
+        chunk_size = chunk_size_for_mtu(_negotiated_mtu(self._client))
         for chunk in chunk_message(payload, chunk_size=chunk_size):
             await self._client.write_gatt_char(REMOTE_REQUEST_UUID, chunk, response=True)
         try:
