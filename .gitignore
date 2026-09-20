@@ -29,3 +29,4 @@ apps/*/dist/
 *.ipa
 *.apk
 *.aab
+.venv-ha/

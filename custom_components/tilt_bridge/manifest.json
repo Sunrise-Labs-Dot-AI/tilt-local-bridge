@@ -1,0 +1,19 @@
+{
+  "domain": "tilt_bridge",
+  "name": "Tilt Local Bridge",
+  "version": "0.1.0",
+  "codeowners": ["@Sunrise-Labs-Dot-AI"],
+  "config_flow": true,
+  "dependencies": ["bluetooth_adapters"],
+  "documentation": "https://github.com/Sunrise-Labs-Dot-AI/tilt-local-bridge/blob/main/docs/HOME_ASSISTANT_BLUETOOTH.md",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Sunrise-Labs-Dot-AI/tilt-local-bridge/issues",
+  "bluetooth": [
+    {
+      "service_uuid": "4e9a0001-3b7c-4f2e-9d61-5c8a2f7b0e10",
+      "connectable": true
+    }
+  ],
+  "requirements": []
+}
