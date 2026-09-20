@@ -13,6 +13,7 @@ SELF = Path(__file__).resolve()
 SKIP_PARTS = {
     ".git",
     ".venv",
+    ".venv-ha",
     "venv",
     "build",
     "dist",

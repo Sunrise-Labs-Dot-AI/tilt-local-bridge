@@ -251,6 +251,13 @@ canonical encoding, the signatures, and the chunking. Both the bridge and the
 app test against it, and `tools/make_remote_vectors.py` regenerates it after an
 intentional protocol change.
 
+## Home Assistant as the phone
+
+Home Assistant itself can be one of the paired phones: the custom integration
+in `custom_components/tilt_bridge` speaks this protocol through Home
+Assistant's Bluetooth stack and pairs with the same shade press. See
+[Home Assistant over Bluetooth](HOME_ASSISTANT_BLUETOOTH.md).
+
 ## When it does not work
 
 See [troubleshooting](TROUBLESHOOTING.md#the-phone-cannot-find-the-bridge).
