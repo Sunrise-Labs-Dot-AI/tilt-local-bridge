@@ -11,6 +11,7 @@ from custom_components.tilt_bridge.client import (
     TiltBridgeClient,
     TiltBridgeError,
     TiltBridgeNotPaired,
+    TiltBridgeStaleServices,
     TiltBridgeUnavailable,
 )
 from custom_components.tilt_bridge.protocol import Identity
@@ -92,3 +93,21 @@ def test_unknown_mtu_is_treated_quietly_as_the_smallest() -> None:
         assert _negotiated_mtu(_BlueZLikeClient()) is None
         assert _negotiated_mtu(_KnownMtuClient()) == 247
         assert _negotiated_mtu(object()) is None
+
+
+async def test_stale_cached_services_are_cleared_and_reported_unavailable(
+    identity: Identity, fake_bridge: FakeBridge
+) -> None:
+    fake_bridge.paired.add(identity.public_key_hex)
+    fake_bridge.stale_services = True
+    client = TiltBridgeClient(identity, name="Office Bridge", ble_device_provider=lambda: object(), client_factory=client_factory_for(fake_bridge))
+    with pytest.raises(TiltBridgeStaleServices) as excinfo:
+        await client.run(lambda session: session.status())
+    assert isinstance(excinfo.value, TiltBridgeUnavailable)
+    assert fake_bridge.cache_cleared == 1
+    assert fake_bridge.requests == []
+
+    # The cache is gone, so the next connection sees the service again.
+    status = await client.run(lambda session: session.status())
+    assert status.shade("door").position == 100
+    assert fake_bridge.connections == 2
