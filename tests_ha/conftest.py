@@ -51,6 +51,8 @@ class FakeBridge:
         self.connections = 0
         self.nonces: dict[str, str] = {}
         self.unreachable = False
+        self.stale_services = False
+        self.cache_cleared = 0
 
     def status_message(self) -> dict[str, Any]:
         return {"t": "status", "writes": self.writes, "shades": [dict(s) for s in self.shades]}
@@ -106,6 +108,18 @@ class FakeBridge:
         return {"t": "error", "code": "bad_request", "message": "unknown", **n}
 
 
+class _FakeServices:
+    """bleak's service collection, reduced to the one lookup the client makes."""
+
+    def __init__(self, bridge: FakeBridge) -> None:
+        self._bridge = bridge
+
+    def get_characteristic(self, uuid: str) -> object | None:
+        if self._bridge.stale_services:
+            return None
+        return object() if uuid in (REMOTE_REQUEST_UUID, REMOTE_RESPONSE_UUID, REMOTE_INFO_UUID) else None
+
+
 class FakeBleakClient:
     """Enough of bleak's client for the session: notify, write, read, disconnect."""
 
@@ -116,6 +130,12 @@ class FakeBleakClient:
         self._callback: Callable[[Any, bytearray], None] | None = None
         self.mtu_size = 185
         self.disconnected = False
+        self.services = _FakeServices(bridge)
+
+    async def clear_cache(self) -> bool:
+        self._bridge.cache_cleared += 1
+        self._bridge.stale_services = False
+        return True
 
     async def start_notify(self, uuid: str, callback: Callable[[Any, bytearray], None]) -> None:
         assert uuid == REMOTE_RESPONSE_UUID

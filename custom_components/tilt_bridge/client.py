@@ -16,6 +16,7 @@ from typing import Any
 
 from bleak import BleakClient
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakCharacteristicNotFoundError, BleakError
 from bleak_retry_connector import (
     BleakClientWithServiceCache,
     BleakConnectionError,
@@ -86,6 +87,40 @@ class TiltBridgeNotPaired(TiltBridgeError):
         super().__init__("unauthorized", "This Home Assistant is not paired with the bridge.")
 
 
+class TiltBridgeStaleServices(TiltBridgeUnavailable):
+    """The adapter's cached picture of the bridge's services is missing ours."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The adapter had a stale picture of the bridge's services; it is cleared for the next attempt."
+        )
+
+
+async def _forget_cached_services(client: Any) -> None:
+    """Drop BlueZ's cached services for the bridge so the next connection rediscovers them."""
+
+    clear = getattr(client, "clear_cache", None)
+    if clear is None:
+        return
+    try:
+        await clear()
+    except Exception:  # noqa: BLE001 - the next connection will rediscover anyway
+        _LOGGER.debug("Could not clear the cached services for the bridge", exc_info=True)
+
+
+def _services_are_stale(client: Any) -> bool:
+    try:
+        services = getattr(client, "services", None)
+    except BleakError:
+        return True
+    if services is None:
+        return False
+    return (
+        services.get_characteristic(REMOTE_RESPONSE_UUID) is None
+        or services.get_characteristic(REMOTE_REQUEST_UUID) is None
+    )
+
+
 class TiltBridgeSession:
     """An open connection to the bridge with a live nonce."""
 
@@ -109,6 +144,8 @@ class TiltBridgeSession:
         self._push_listeners.append(listener)
 
     async def start(self) -> None:
+        if _services_are_stale(self._client):
+            raise TiltBridgeStaleServices()
         await self._client.start_notify(REMOTE_RESPONSE_UUID, self._on_notify)
 
     async def close(self) -> None:
@@ -265,6 +302,14 @@ class TiltBridgeClient:
             try:
                 await session.start()
                 return await operation(session)
+            except TiltBridgeStaleServices:
+                await _forget_cached_services(client)
+                raise
+            except BleakCharacteristicNotFoundError as exc:
+                await _forget_cached_services(client)
+                raise TiltBridgeStaleServices() from exc
+            except BleakError as exc:
+                raise TiltBridgeUnavailable(f"Bluetooth failure talking to the bridge: {exc}") from exc
             except (asyncio.TimeoutError, OSError) as exc:
                 raise TiltBridgeUnavailable(f"Bluetooth failure talking to the bridge: {exc}") from exc
             finally:
