@@ -20,3 +20,5 @@ POLL_INTERVAL_SECONDS = 60
 MOVING_POLL_INTERVAL_SECONDS = 15
 MOVING_POLL_WINDOW_SECONDS = 150
 REQUEST_TIMEOUT_SECONDS = 12.0
+# A missed poll keeps the last status this long before the shades go unavailable.
+HOLD_LAST_STATUS_SECONDS = 600

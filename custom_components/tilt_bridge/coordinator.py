@@ -21,6 +21,7 @@ from .client import (
 )
 from .const import (
     DOMAIN,
+    HOLD_LAST_STATUS_SECONDS,
     MOVING_POLL_INTERVAL_SECONDS,
     MOVING_POLL_WINDOW_SECONDS,
     POLL_INTERVAL_SECONDS,
@@ -55,16 +56,40 @@ class TiltBridgeCoordinator(DataUpdateCoordinator[BridgeStatus]):
         self.bridge_name = bridge_name
         self.address = address
         self._burst_until: float | None = None
+        self._last_success_at: float | None = None
+        self.missed_polls = 0
 
     async def _async_update_data(self) -> BridgeStatus:
         try:
             status: BridgeStatus = await self.client.run(lambda session: session.status())
         except TiltBridgeNotPaired as exc:
             raise ConfigEntryAuthFailed(str(exc)) from exc
-        except (TiltBridgeUnavailable, TiltBridgeError) as exc:
+        except TiltBridgeUnavailable as exc:
+            # A marginal link misses the odd poll. Keep showing the last status
+            # for a while so the covers stay usable; a command still opens a
+            # fresh connection of its own.
+            if self.data is not None and self._within_hold():
+                self.missed_polls += 1
+                _LOGGER.debug(
+                    "Poll of %s missed (%s); keeping the last status (%s in a row)",
+                    self.bridge_name,
+                    exc,
+                    self.missed_polls,
+                )
+                self._set_interval(self.data)
+                return self.data
             raise UpdateFailed(str(exc)) from exc
+        except TiltBridgeError as exc:
+            raise UpdateFailed(str(exc)) from exc
+        self._last_success_at = time.monotonic()
+        self.missed_polls = 0
         self._set_interval(status)
         return status
+
+    def _within_hold(self) -> bool:
+        if self._last_success_at is None:
+            return False
+        return time.monotonic() - self._last_success_at < HOLD_LAST_STATUS_SECONDS
 
     def _set_interval(self, status: BridgeStatus) -> None:
         now = time.monotonic()
@@ -88,6 +113,8 @@ class TiltBridgeCoordinator(DataUpdateCoordinator[BridgeStatus]):
         except TiltBridgeError as exc:
             raise HomeAssistantError(str(exc)) from exc
         _LOGGER.debug("Bridge %s took position %s for %s: %s", self.bridge_name, position, shade_id, outcome)
+        self._last_success_at = time.monotonic()
+        self.missed_polls = 0
         self._burst_until = time.monotonic() + MOVING_POLL_WINDOW_SECONDS
         if self.data is not None:
             shades = tuple(
