@@ -10,7 +10,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
-SKIP_PARTS = {".git", ".venv", "venv", "build", "dist", "__pycache__"}
+SKIP_PARTS = {
+    ".git",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "__pycache__",
+    "node_modules",
+    ".expo",
+    "ios",
+    "android",
+}
+# Generated dependency manifests carry third-party maintainer metadata.
+SKIP_FILES = {"package-lock.json"}
 TEXT_SUFFIXES = {
     "",
     ".css",
@@ -53,6 +66,8 @@ def files_to_scan() -> list[Path]:
         if not path.is_file() or path.resolve() == SELF:
             continue
         if any(part in SKIP_PARTS for part in path.relative_to(ROOT).parts):
+            continue
+        if path.name in SKIP_FILES:
             continue
         if path.suffix.lower() in TEXT_SUFFIXES:
             files.append(path)

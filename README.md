@@ -24,8 +24,8 @@ Tilt or SmarterHome roller shades to Home Assistant.
 
 Use https://github.com/Sunrise-Labs-Dot-AI/tilt-local-bridge as the source of
 truth. Read README.md, SECURITY.md, docs/SETUP.md, docs/PAIRING.md,
-docs/HOME_ASSISTANT.md, docs/REMOTES.md, and docs/TROUBLESHOOTING.md before
-acting. Inspect my
+docs/HOME_ASSISTANT.md, docs/REMOTES.md, docs/BLUETOOTH_REMOTE.md, and
+docs/TROUBLESHOOTING.md before acting. Inspect my
 environment before changing it, confirm which machine is the Raspberry Pi, and
 use SSH only after I confirm any new or changed host key. Never bypass SSH host
 key verification.
@@ -75,6 +75,8 @@ give you the smallest next action. The manual path remains below.
 - Optional Home Assistant low-battery alert blueprint
 - Optional Lutron Caseta Pico remote control through a position-mapped
   blueprint
+- Optional Bluetooth phone remote that keeps working when the network is
+  down, paired with one approval tap in Home Assistant
 - Optional one-shot pairing with credentials entered interactively and never
   written to disk
 - Conservative position verification while a shade is moving
@@ -82,15 +84,15 @@ give you the smallest next action. The manual path remains below.
 ## Architecture
 
 ```text
-Home Assistant cover
-        |
-   MQTT discovery
-        |
-Raspberry Pi bridge
-        |
-  encrypted BLE
-        |
-Tilt roller shade
+Home Assistant cover        Phone remote (optional)
+        |                           |
+   MQTT discovery            signed BLE requests
+        |                           |
+        +------ Raspberry Pi bridge -+
+                        |
+                  encrypted BLE
+                        |
+                Tilt roller shade
 ```
 
 The bridge exposes only the protocol operations needed for status and position.
@@ -104,6 +106,8 @@ It has no reset, calibration, rename, firmware, or arbitrary-command interface.
 4. Enable [position control](docs/HOME_ASSISTANT.md).
 5. Optionally add a [physical remote](docs/REMOTES.md).
 6. Optionally expose the cover to [Google Home](docs/GOOGLE_HOME.md).
+7. Optionally pair the [Bluetooth phone remote](docs/BLUETOOTH_REMOTE.md) for
+   the days the network is down.
 
 Replacing the Raspberry Pi requires moving the protected configuration and
 pairing keys before the old bridge is retired. Follow the
@@ -131,6 +135,9 @@ open an issue with the firmware version and redacted logs when reporting one.
 - The pairing tool selects exactly one shade advertising the pairing marker and
   refuses ambiguous multi-device scans.
 - No Tilt password, access token, pairing key, or MQTT password is logged.
+- The Bluetooth phone remote is off until a config gate and a launch flag both
+  enable it, a phone controls nothing until a person approves it, and every
+  phone request is signed over a single-use nonce.
 
 See [Security](SECURITY.md) for reporting and operational guidance.
 
@@ -142,6 +149,15 @@ python3 -m venv .venv
 python -m pip install -e .
 python -m unittest discover -s tests
 python tools/check_public_tree.py
+```
+
+The phone app has its own checks:
+
+```bash
+cd apps/shade-remote
+npm ci
+npm run typecheck
+npm test
 ```
 
 ## License

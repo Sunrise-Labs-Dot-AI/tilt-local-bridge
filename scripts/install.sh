@@ -6,6 +6,7 @@ activate=0
 install_packages=0
 enable_service=0
 allow_writes=0
+allow_remote=0
 service_user="tiltbridge"
 config_path="/etc/tilt-local-bridge/bridge.json"
 install_root="/opt/tilt-local-bridge"
@@ -21,6 +22,7 @@ Options:
   --install-system-packages  Install BlueZ and Python dependencies with apt
   --enable                   Enable and start the service after validation
   --allow-position-writes    Add the launch-time write gate to the service
+  --allow-bluetooth-remote   Add the launch-time gate for the Bluetooth phone remote
   --config PATH              Config path (default: /etc/tilt-local-bridge/bridge.json)
   --service-user USER        Service account (default: tiltbridge)
   --help                     Show this help
@@ -35,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --install-system-packages) install_packages=1 ;;
     --enable) enable_service=1 ;;
     --allow-position-writes) allow_writes=1 ;;
+    --allow-bluetooth-remote) allow_remote=1 ;;
     --config)
       [[ $# -ge 2 ]] || { echo "error: --config requires a path" >&2; exit 2; }
       config_path="$2"
@@ -109,6 +112,10 @@ if [[ "$allow_writes" == "1" ]]; then
   runtime_flags+=(--expect-position-writes)
   serve_flags+=(--allow-position-writes)
 fi
+if [[ "$allow_remote" == "1" ]]; then
+  runtime_flags+=(--expect-bluetooth-remote)
+  serve_flags+=(--allow-bluetooth-remote)
+fi
 runtime_flags_string="${runtime_flags[*]}"
 serve_flags_string="${serve_flags[*]}"
 
@@ -130,6 +137,8 @@ User=$service_user
 $supplementary_groups
 WorkingDirectory=$install_root
 Environment=PYTHONPATH=$install_root/src
+StateDirectory=tilt-local-bridge
+StateDirectoryMode=0750
 ExecStartPre=/usr/bin/python3 -m tilt_local_bridge.tilt_bridge --config $config_path check-runtime $runtime_flags_string
 ExecStart=/usr/bin/python3 -m tilt_local_bridge.tilt_bridge --config $config_path serve $serve_flags_string
 Restart=on-failure

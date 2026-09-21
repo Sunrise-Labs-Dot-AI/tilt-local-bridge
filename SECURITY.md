@@ -30,6 +30,16 @@ Use a dedicated MQTT account for this bridge. Restrict it to the configured
 topic prefix when your broker supports access-control lists. Do not expose an
 unencrypted MQTT listener to the internet.
 
+## Phone remote boundary
+
+The optional Bluetooth phone remote is off until both a config gate and a
+launch flag enable it. A phone is recorded only after a person approves it from
+Home Assistant or with an operator signal on the Raspberry Pi, every request it
+sends afterwards is signed over a bridge-issued single-use nonce, and it can
+only ask for the status and position operations the bridge already allows. The
+shade pairing keys never leave the Raspberry Pi. See
+[docs/BLUETOOTH_REMOTE.md](docs/BLUETOOTH_REMOTE.md).
+
 ## Pairing boundary
 
 The pairing command signs in to the legacy Tilt account service and changes a

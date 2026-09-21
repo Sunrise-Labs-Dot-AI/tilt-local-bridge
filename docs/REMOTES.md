@@ -137,6 +137,10 @@ Home Assistant works the same way: swap the event trigger for whatever your
 remote produces, an `event` entity for Zigbee and Z-Wave buttons or a device
 trigger for others, and keep every branch pointed at a position.
 
-Do not put remote input on the bridge Raspberry Pi itself. Its single Bluetooth
-radio is already the contended resource serving the shades, and an
-unauthenticated local listener would let anything in radio range move them.
+Do not put remote input on the bridge Raspberry Pi itself unless it is gated
+and authenticated the way the [Bluetooth phone remote](BLUETOOTH_REMOTE.md)
+is. Its single Bluetooth radio is already the contended resource serving the
+shades, and an unauthenticated local listener would let anything in radio
+range move them. The phone remote pays for its place on that radio with an
+approval step, signed requests, and the same position-only rule as every other
+remote.

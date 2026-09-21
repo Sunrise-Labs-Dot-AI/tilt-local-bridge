@@ -16,7 +16,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 _ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _MAC_PATTERN = re.compile(r"^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$")
 _TIME_PATTERN = re.compile(r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+_ADAPTER_PATTERN = re.compile(r"^hci[0-9]{1,2}$")
 _PERMIT_MARKER = object()
+# "bridge" names the bridge's own MQTT topics, so no shade may claim it.
+_RESERVED_SHADE_IDS = frozenset({"bridge"})
+_MAX_REMOTE_NAME_LENGTH = 24
 
 
 class TiltBridgeConfigError(RuntimeError):
@@ -92,6 +96,16 @@ class QuietHoursConfig:
 
 
 @dataclass(frozen=True)
+class BluetoothRemoteConfig:
+    """The optional phone remote published on the bridge's own adapter."""
+
+    enabled: bool = False
+    name: str = "Tilt Local Bridge"
+    state_file: Path = Path("/var/lib/tilt-local-bridge/remote.json")
+    adapter: str = "hci0"
+
+
+@dataclass(frozen=True)
 class TiltBridgeConfig:
     version: int
     access: BridgeAccessConfig
@@ -100,6 +114,7 @@ class TiltBridgeConfig:
     poll_interval_seconds: int = 1800
     quiet_hours: QuietHoursConfig | None = None
     command_cooldown_seconds: int = 5
+    bluetooth_remote: BluetoothRemoteConfig | None = None
 
     def poll_interval_at(self, moment: datetime) -> int:
         if self.quiet_hours is not None and self.quiet_hours.is_active(moment):
@@ -146,6 +161,23 @@ def authorize_shade_access(
     )
 
 
+def authorize_bluetooth_remote(
+    config: TiltBridgeConfig,
+    *,
+    request_remote: bool,
+) -> BluetoothRemoteConfig:
+    """Require both the config gate and the launch flag for the phone remote."""
+
+    if not request_remote:
+        raise ShadeAccessDisabled("The Bluetooth remote was not requested at launch.")
+    remote = config.bluetooth_remote
+    if remote is None or not remote.enabled:
+        raise ShadeAccessDisabled("The Bluetooth remote is disabled by configuration.")
+    if not config.access.allow_reads:
+        raise ShadeAccessDisabled("The Bluetooth remote requires shade reads.")
+    return remote
+
+
 def load_config(path: Path) -> TiltBridgeConfig:
     """Load a versioned JSON config and reject all unknown fields."""
 
@@ -158,6 +190,7 @@ def load_config(path: Path) -> TiltBridgeConfig:
             "poll_interval_seconds",
             "quiet_hours",
             "command_cooldown_seconds",
+            "bluetooth_remote",
         },
         context="bridge config",
     )
@@ -191,6 +224,38 @@ def load_config(path: Path) -> TiltBridgeConfig:
             minimum=2,
             maximum=60,
         ),
+        bluetooth_remote=_parse_bluetooth_remote(raw.get("bluetooth_remote")),
+    )
+
+
+def _parse_bluetooth_remote(value: object) -> BluetoothRemoteConfig | None:
+    if value is None:
+        return None
+    raw = _require_mapping(value, "bluetooth_remote")
+    _require_keys(
+        raw,
+        required={"enabled"},
+        optional={"name", "state_file", "adapter"},
+        context="bluetooth_remote",
+    )
+    defaults = BluetoothRemoteConfig()
+    name = _require_nonempty_string(raw.get("name", defaults.name), "bluetooth_remote.name")
+    if len(name) > _MAX_REMOTE_NAME_LENGTH or not name.isprintable():
+        raise TiltBridgeConfigError(
+            f"bluetooth_remote.name must be printable and at most {_MAX_REMOTE_NAME_LENGTH} characters."
+        )
+    adapter = _require_nonempty_string(
+        raw.get("adapter", defaults.adapter), "bluetooth_remote.adapter"
+    )
+    if not _ADAPTER_PATTERN.fullmatch(adapter):
+        raise TiltBridgeConfigError("bluetooth_remote.adapter must look like hci0.")
+    return BluetoothRemoteConfig(
+        enabled=_require_bool(raw["enabled"], "bluetooth_remote.enabled"),
+        name=name,
+        state_file=_require_absolute_path(
+            raw.get("state_file", str(defaults.state_file)), "bluetooth_remote.state_file"
+        ),
+        adapter=adapter,
     )
 
 
@@ -345,6 +410,8 @@ def _parse_shade(value: object, index: int) -> ShadeConfig:
         raise TiltBridgeConfigError(
             f"shades[{index}].id must use lowercase letters, digits, and underscores."
         )
+    if shade_id in _RESERVED_SHADE_IDS:
+        raise TiltBridgeConfigError(f"shades[{index}].id {shade_id!r} is reserved.")
     name = _require_nonempty_string(raw["name"], f"shades[{index}].name")
     if len(name) > 80:
         raise TiltBridgeConfigError(f"shades[{index}].name is too long.")
