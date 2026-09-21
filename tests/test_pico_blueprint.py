@@ -30,11 +30,15 @@ class PicoBlueprintTests(unittest.TestCase):
         self.assertIn("cover.set_cover_position", self.blueprint)
 
     def test_trigger_is_scoped_to_one_remote_and_one_edge(self) -> None:
-        """Other remotes share the event type, and release must not double-fire."""
+        """Other remotes share the event type, and one edge only, so a press never double-fires.
+
+        The edge is the release: the Smart Bridge has delivered a release with no
+        press before it, never the reverse, so the release is the one to act on.
+        """
         self.assertIn("event_type: lutron_caseta_button_event", self.blueprint)
         self.assertIn("device_id: !input pico_device", self.blueprint)
-        self.assertIn("action: press", self.blueprint)
-        self.assertNotIn("action: release", self.blueprint)
+        self.assertIn("action: release", self.blueprint)
+        self.assertNotIn("action: press", self.blueprint)
 
     def test_every_button_maps_to_a_position(self) -> None:
         for phrase in (
