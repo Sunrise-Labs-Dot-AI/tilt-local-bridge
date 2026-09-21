@@ -76,7 +76,9 @@ give you the smallest next action. The manual path remains below.
 - Optional Lutron Caseta Pico remote control through a position-mapped
   blueprint
 - Optional Bluetooth phone remote that keeps working when the network is
-  down, paired with one approval tap in Home Assistant
+  down, approved with a press on the shade the bridge names
+- Optional Home Assistant custom integration that talks to the bridge over
+  Bluetooth instead of the network
 - Optional one-shot pairing with credentials entered interactively and never
   written to disk
 - Conservative position verification while a shade is moving
@@ -108,6 +110,8 @@ It has no reset, calibration, rename, firmware, or arbitrary-command interface.
 6. Optionally expose the cover to [Google Home](docs/GOOGLE_HOME.md).
 7. Optionally pair the [Bluetooth phone remote](docs/BLUETOOTH_REMOTE.md) for
    the days the network is down.
+8. Optionally let [Home Assistant reach the bridge over Bluetooth](docs/HOME_ASSISTANT_BLUETOOTH.md)
+   instead of the network, with the custom integration in `custom_components`.
 
 Replacing the Raspberry Pi requires moving the protected configuration and
 pairing keys before the old bridge is retired. Follow the

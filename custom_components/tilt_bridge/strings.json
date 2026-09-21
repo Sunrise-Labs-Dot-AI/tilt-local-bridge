@@ -1,0 +1,45 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "confirm": {
+        "title": "Tilt Local Bridge",
+        "description": "Set up {name}? Home Assistant will talk to it directly over Bluetooth, so the shades keep answering when Wi-Fi is down."
+      },
+      "user": {
+        "title": "Choose a bridge",
+        "data": {
+          "address": "Bridge"
+        }
+      },
+      "pair": {
+        "title": "Approve Home Assistant on {name}",
+        "description": "The bridge is waiting for a button press it chose at random.\n\nTap **{direction}** on **{shade}** and let it move, then press Submit. The bridge checks every fifteen seconds; any other shade or direction cancels the request.\n\nIf the bridge's own Home Assistant entities are still reachable, the Approve phone pairing button accepts code **{code}** instead. The request expires after two minutes; Submit asks again."
+      },
+      "reauth_confirm": {
+        "title": "Pair again with {name}",
+        "description": "{name} no longer recognises this Home Assistant. Pair again with a shade button press."
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the bridge over Bluetooth. Move closer or check the bridge is advertising.",
+      "still_pending": "Not approved yet. Press the button the bridge asked for, wait a moment, and submit again.",
+      "denied": "That was not the press the bridge asked for. Follow the new instruction and try again.",
+      "expired": "The request expired. A new one is waiting; follow the instruction and try again.",
+      "busy": "Another device is waiting for approval on this bridge. Try again in a minute.",
+      "unknown": "The bridge refused the request."
+    },
+    "abort": {
+      "already_configured": "This bridge is already set up.",
+      "no_devices_found": "No Tilt Local Bridge is advertising within Bluetooth range.",
+      "reauth_successful": "Paired again."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      }
+    }
+  }
+}

@@ -40,6 +40,25 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:ci
 
+  home-assistant:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install pytest-homeassistant-custom-component
+      - name: Install the Bluetooth component requirements
+        run: |
+          python - <<'PY'
+          import json, pathlib, subprocess, sys, homeassistant
+          base = pathlib.Path(homeassistant.__file__).parent / "components"
+          reqs = sorted({r for comp in ("bluetooth", "usb", "bluetooth_adapters") for r in json.load(open(base / comp / "manifest.json")).get("requirements", [])})
+          subprocess.check_call([sys.executable, "-m", "pip", "install", *reqs])
+          PY
+      - run: python -m pytest tests_ha -q
+
   secrets:
     runs-on: ubuntu-latest
     env:
