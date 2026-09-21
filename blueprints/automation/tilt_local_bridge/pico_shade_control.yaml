@@ -110,11 +110,13 @@ variables:
   button: "{{ trigger.event.data.button_type | default('', true) }}"
 
 triggers:
+  # One edge per press, and the release is the one that arrives: the hub has
+  # been seen delivering a release with no press before it, never the reverse.
   - trigger: event
     event_type: lutron_caseta_button_event
     event_data:
       device_id: !input pico_device
-      action: press
+      action: release
 
 conditions: []
 

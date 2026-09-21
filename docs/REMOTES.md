@@ -91,7 +91,10 @@ their offset.
 Other Pico models report different button names. To see what yours sends, open
 **Developer tools**, then **Events**, listen to `lutron_caseta_button_event`,
 and press each button. Every press produces two events, `press` and `release`.
-The blueprint acts only on `press`, so a single press does not fire twice.
+The blueprint acts only on `release`, so a single press does not fire twice. It
+is the release rather than the press because the Smart Bridge has been seen
+delivering a release with no press before it, and a shade that ignores a button
+is worse than one that moves a tenth of a second later.
 
 The blueprint ignores button names it does not recognise, so an unmapped button
 does nothing rather than misbehaving. If your remote reports names outside the
